@@ -15,3 +15,4 @@ pub mod tx;
 pub mod wallet;
 pub mod tutorial;
 pub mod benchmark;
+pub mod upgrade;
