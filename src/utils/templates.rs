@@ -6,56 +6,50 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateRegistry {
     pub version: String,
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TemplateRegistry {
+    #[serde(default)]
     pub templates: Vec<TemplateEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateEntry {
     pub name: String,
-    pub version: String,
     pub description: String,
-    pub author: String,
+    pub version: String,
+    pub source: String,
+    #[serde(default)]
     pub tags: Vec<String>,
-    pub source: TemplateSource,
-    pub created_at: String,
-    pub updated_at: String,
-    pub downloads: u64,
-    pub verified: bool,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum TemplateSource {
-    #[serde(rename = "git")]
-    Git { url: String, branch: Option<String> },
-    #[serde(rename = "local")]
-    Local { path: String },
-    #[serde(rename = "builtin")]
-    Builtin { id: String },
+#[derive(Debug, Clone, Deserialize)]
+struct TemplateManifest {
+    name: Option<String>,
+    description: Option<String>,
+    version: Option<String>,
+    source: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
-impl Default for TemplateRegistry {
-    fn default() -> Self {
-        Self {
-            version: "1".to_string(),
-            templates: vec![],
-        }
-    }
-}
+const DEFAULT_REGISTRY: &str = include_str!("../../templates/registry.json");
 
-pub fn registry_path() -> Result<PathBuf> {
-    let base = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("Unable to resolve home directory"))?;
-    Ok(base.join(".starforge").join("templates").join("registry.json"))
-}
-
-pub fn templates_dir() -> Result<PathBuf> {
-    let base = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("Unable to resolve home directory"))?;
-    let dir = base.join(".starforge").join("templates");
+fn registry_path() -> Result<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
+    let dir = home.join(".starforge").join("templates");
     if !dir.exists() {
-        fs::create_dir_all(&dir)
-            .with_context(|| format!("Failed to create templates directory: {}", dir.display()))?;
+        fs::create_dir_all(&dir).with_context(|| format!("Failed to create {}", dir.display()))?;
+    }
+    Ok(dir.join("registry.json"))
+}
+
+fn template_storage_dir() -> Result<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
+    let dir = home.join(".starforge").join("templates").join("storage");
+    if !dir.exists() {
+        fs::create_dir_all(&dir).with_context(|| format!("Failed to create {}", dir.display()))?;
     }
     Ok(dir)
 }

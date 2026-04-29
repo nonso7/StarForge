@@ -19,6 +19,14 @@ struct Cli {
     /// Suppress the ASCII banner and decorative output
     #[arg(long, short = 'q', global = true)]
     quiet: bool,
+
+    /// Log output format: human (default) or json
+    #[arg(long, global = true, default_value = "human", value_parser = ["human", "json"])]
+    log_format: String,
+
+    /// Directory to write rotating log files into (optional)
+    #[arg(long, global = true)]
+    log_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -29,9 +37,12 @@ enum Commands {
     /// Generate Soroban project boilerplate
     #[command(subcommand)]
     New(commands::new::NewCommands),
-    /// Contract operations (invoke, etc.)
+    /// Contract operations (invoke, inspect, etc.)
     #[command(subcommand)]
     Contract(commands::contract::ContractCommands),
+    /// Deep contract storage inspection (state, key, storage)
+    #[command(subcommand)]
+    Inspect(commands::inspect::InspectCommands),
     /// Deploy a compiled Soroban contract (.wasm)
     Deploy(commands::deploy::DeployArgs),
     /// Show starforge config and environment info
@@ -69,6 +80,13 @@ enum Commands {
     /// Manage third-party plugins
     #[command(subcommand)]
     Plugin(commands::plugin::PluginCommands),
+    /// Manage community contract templates
+    #[command(subcommand)]
+    Template(commands::template::TemplateCommands),
+
+    /// Contract upgrade management (propose, approve, execute, rollback)
+    #[command(subcommand)]
+    Upgrade(commands::upgrade::UpgradeCommands),
 
     /// Manage contract templates from the marketplace
     #[command(subcommand)]
@@ -82,6 +100,15 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
 
+    // Initialise structured logging before anything else runs.
+    let log_cfg = utils::logging::config_from_env(
+        Some(cli.log_format.as_str()),
+        cli.log_dir.clone(),
+    );
+    if let Err(e) = utils::logging::init(log_cfg) {
+        eprintln!("Warning: failed to initialise logger: {}", e);
+    }
+
     if !cli.quiet {
         print_banner();
     }
@@ -90,6 +117,7 @@ fn main() {
         Commands::Wallet(_) => "wallet",
         Commands::New(_) => "new",
         Commands::Contract(_) => "contract",
+        Commands::Inspect(_) => "inspect",
         Commands::Deploy(_) => "deploy",
         Commands::Info => "info",
         Commands::Tx(_) => "tx",
@@ -111,6 +139,7 @@ fn main() {
         Commands::Wallet(cmd)  => commands::wallet::handle(cmd),
         Commands::New(cmd)     => commands::new::handle(cmd),
         Commands::Contract(cmd) => commands::contract::handle(cmd),
+        Commands::Inspect(cmd)  => commands::inspect::handle(cmd),
         Commands::Deploy(args) => commands::deploy::handle(args),
         Commands::Info         => commands::info::handle(),
         Commands::Tx(args) => commands::tx::handle(args),
