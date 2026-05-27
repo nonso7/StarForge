@@ -13,6 +13,8 @@ pub struct SimulationResult {
     pub return_value: String,
     pub fee: u64,
     pub events: Vec<String>,
+    #[serde(default)]
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -109,6 +111,33 @@ pub fn simulate_transaction(
         return_value,
         fee,
         events,
+        errors: extract_simulation_errors(&result),
+    })
+}
+
+pub fn simulate_deploy_transaction(
+    wasm_hash: &str,
+    network: &str,
+    wallet: &WalletEntry,
+) -> Result<SimulationResult> {
+    let rpc_url = get_rpc_url(network);
+    let request = SorobanRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 1,
+        method: "simulateTransaction".to_string(),
+        params: serde_json::json!({
+            "transaction": build_deploy_transaction_xdr(wasm_hash, wallet, network)?,
+        }),
+    };
+
+    let result: serde_json::Value =
+        rpc_request_with_url(&rpc_url, request).context("Deploy simulation request failed")?;
+
+    Ok(SimulationResult {
+        return_value: decode_return_value(&result)?,
+        fee: extract_fee(&result)?,
+        events: extract_events(&result)?,
+        errors: extract_simulation_errors(&result),
     })
 }
 
@@ -331,6 +360,13 @@ fn build_and_sign_transaction(
     ))
 }
 
+fn build_deploy_transaction_xdr(wasm_hash: &str, wallet: &WalletEntry, network: &str) -> Result<String> {
+    Ok(format!(
+        "mock_deploy_transaction_xdr_{}_{}_{}",
+        wasm_hash, wallet.public_key, network
+    ))
+}
+
 fn decode_return_value(result: &serde_json::Value) -> Result<String> {
     // Simplified return value decoding
     // In production, decode actual XDR ScVal to human-readable format
@@ -359,6 +395,22 @@ fn extract_events(result: &serde_json::Value) -> Result<Vec<String>> {
         }
     }
     Ok(Vec::new())
+}
+
+fn extract_simulation_errors(result: &serde_json::Value) -> Vec<String> {
+    if let Some(error) = result.get("error") {
+        return vec![error.to_string()];
+    }
+
+    result
+        .get("results")
+        .and_then(|results| results.as_array())
+        .map(|items| {
+            items.iter()
+                .filter_map(|item| item.get("error").map(|err| err.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 fn extract_transaction_hash(result: &serde_json::Value) -> Result<String> {
@@ -509,3 +561,4 @@ mod tests {
             .contains("Expected a Stellar contract strkey"));
     }
 }
+
