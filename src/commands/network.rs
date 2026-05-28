@@ -37,7 +37,11 @@ pub fn handle(cmd: NetworkCommands) -> Result<()> {
     match cmd {
         NetworkCommands::Show => show(),
         NetworkCommands::Switch { network } => switch(network),
-        NetworkCommands::Add { name, horizon_url, soroban_rpc_url } => add_network(name, horizon_url, soroban_rpc_url),
+        NetworkCommands::Add {
+            name,
+            horizon_url,
+            soroban_rpc_url,
+        } => add_network(name, horizon_url, soroban_rpc_url),
         NetworkCommands::Test { network } => test_network(network),
     }
 }
@@ -70,7 +74,10 @@ fn switch(target: String) -> Result<()> {
 
     // Validate network exists
     if !cfg.networks.contains_key(&target) {
-        anyhow::bail!("Network '{}' not found. Use 'starforge network add' to create it.", target);
+        anyhow::bail!(
+            "Network '{}' not found. Use 'starforge network add' to create it.",
+            target
+        );
     }
 
     // Check if already on the target network
@@ -97,7 +104,12 @@ fn switch(target: String) -> Result<()> {
     Ok(())
 }
 
-fn add_network(name: String, horizon_url: String, soroban_rpc_url: Option<String>, friendbot_url: Option<String>) -> Result<()> {
+fn add_network(
+    name: String,
+    horizon_url: String,
+    soroban_rpc_url: Option<String>,
+    friendbot_url: Option<String>,
+) -> Result<()> {
     let mut cfg = config::load()?;
 
     if !horizon_url.starts_with("http://") && !horizon_url.starts_with("https://") {
@@ -116,7 +128,13 @@ fn add_network(name: String, horizon_url: String, soroban_rpc_url: Option<String
         }
     }
 
-    config::add_custom_network(&mut cfg, name.clone(), horizon_url.clone(), soroban_rpc_url.clone(), friendbot_url.clone())?;
+    config::add_custom_network(
+        &mut cfg,
+        name.clone(),
+        horizon_url.clone(),
+        soroban_rpc_url.clone(),
+        friendbot_url.clone(),
+    )?;
     config::save(&cfg)?;
 
     p::success(&format!("Network '{}' added successfully", name));
@@ -161,7 +179,8 @@ fn test_network(network_name: Option<String>) -> Result<()> {
 
         match ureq::post(soroban_url)
             .set("Content-Type", "application/json")
-            .send_json(&req) {
+            .send_json(&req)
+        {
             Ok(_) => {
                 p::success("✓ Soroban RPC endpoint is reachable");
             }

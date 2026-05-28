@@ -10,4 +10,3 @@ pub fn validate_wasm(bytes: &[u8]) -> Result<()> {
     }
     Ok(())
 }
-

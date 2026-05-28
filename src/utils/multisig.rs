@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use stellar_strkey::ed25519::PublicKey as StellarPublicKey;
 use std::fs;
 use std::path::{Path, PathBuf};
+use stellar_strkey::ed25519::PublicKey as StellarPublicKey;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MultiSigAccount {
@@ -91,7 +91,8 @@ pub fn save_account(account: &MultiSigAccount) -> Result<()> {
 
 pub fn load_account(name: &str) -> Result<MultiSigAccount> {
     let path = account_path(name)?;
-    let s = fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let s =
+        fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))?;
     let acct: MultiSigAccount =
         serde_json::from_str(&s).with_context(|| format!("Failed to parse {}", path.display()))?;
     Ok(acct)
@@ -106,7 +107,9 @@ pub fn list_accounts() -> Result<Vec<MultiSigAccount>> {
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        let Ok(s) = fs::read_to_string(&path) else { continue };
+        let Ok(s) = fs::read_to_string(&path) else {
+            continue;
+        };
         if let Ok(acct) = serde_json::from_str::<MultiSigAccount>(&s) {
             out.push(acct);
         }
@@ -116,7 +119,8 @@ pub fn list_accounts() -> Result<Vec<MultiSigAccount>> {
 }
 
 pub fn load_transaction(path: &Path) -> Result<MultiSigTransaction> {
-    let s = fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let s =
+        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
     let tx: MultiSigTransaction =
         serde_json::from_str(&s).with_context(|| format!("Failed to parse {}", path.display()))?;
     Ok(tx)
@@ -196,7 +200,10 @@ pub fn add_signature_to_transaction(
 ) -> Result<()> {
     // Check if already signed
     if tx.signatures.iter().any(|s| s.signer_key == signer_key) {
-        anyhow::bail!("Signer '{}' has already signed this transaction", signer_key);
+        anyhow::bail!(
+            "Signer '{}' has already signed this transaction",
+            signer_key
+        );
     }
 
     let sig = Signature {
@@ -227,7 +234,7 @@ pub fn build_multisig_transaction_xdr(
 ) -> Result<String> {
     // This is a simplified mock implementation
     // In production, use stellar-xdr to build proper transaction XDR
-    
+
     let _network_passphrase = match network {
         "mainnet" => "Public Global Stellar Network ; September 2015",
         _ => "Test SDF Network ; September 2015",
@@ -252,7 +259,7 @@ pub fn sign_transaction_partial(
 ) -> Result<String> {
     // This is a simplified mock implementation
     // In production, use stellar-xdr and ed25519 signing
-    
+
     let _network_passphrase = match network {
         "mainnet" => "Public Global Stellar Network ; September 2015",
         _ => "Test SDF Network ; September 2015",
@@ -264,13 +271,10 @@ pub fn sign_transaction_partial(
     Ok(general_purpose::STANDARD.encode(signature))
 }
 
-pub fn combine_signatures(
-    transaction_xdr: &str,
-    signatures: &[Signature],
-) -> Result<String> {
+pub fn combine_signatures(transaction_xdr: &str, signatures: &[Signature]) -> Result<String> {
     // This is a simplified mock implementation
     // In production, use stellar-xdr to build TransactionEnvelope with all signatures
-    
+
     let combined = format!(
         "signed_multisig_tx_{}_with_{}_sigs",
         &transaction_xdr[..16],
@@ -300,7 +304,8 @@ pub fn build_account_setup_transaction(
         )))
         .collect::<Vec<_>>();
 
-    let transaction_xdr = build_multisig_transaction_xdr(&account.account_id, &operations, 0, network)?;
+    let transaction_xdr =
+        build_multisig_transaction_xdr(&account.account_id, &operations, 0, network)?;
 
     Ok(MultiSigTransaction {
         id: format!("setup-{}", account.name),
@@ -318,7 +323,12 @@ pub fn build_stellar_cli_steps(account: &MultiSigAccount, network: &str) -> Vec<
     let signer_args = account
         .signers
         .iter()
-        .map(|signer| format!("--signer {} --signer-weight {}", signer.public_key, signer.weight))
+        .map(|signer| {
+            format!(
+                "--signer {} --signer-weight {}",
+                signer.public_key, signer.weight
+            )
+        })
         .collect::<Vec<_>>()
         .join(" ");
 
@@ -362,14 +372,14 @@ mod tests {
         use ed25519_dalek::SigningKey;
         use rand::RngCore;
         use stellar_strkey::ed25519::PublicKey as StellarPublicKey;
-        
+
         let mut rng = rand::thread_rng();
         let mut seed = [0u8; 32];
         rng.fill_bytes(&mut seed);
         let signing_key = SigningKey::from_bytes(&seed);
         let verifying_key = signing_key.verifying_key();
         let valid_key = StellarPublicKey(verifying_key.to_bytes()).to_string();
-        
+
         assert!(validate_signer(&valid_key).is_ok());
 
         let invalid_key = "INVALID_KEY";
@@ -432,4 +442,3 @@ mod tests {
         assert!(!check_transaction_ready(&tx2));
     }
 }
-

@@ -11,4 +11,3 @@ pub fn success(message: &str) {
 pub fn warn(message: &str) {
     eprintln!("  {} {}", "!".yellow().bold(), message);
 }
-

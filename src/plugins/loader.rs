@@ -1,4 +1,6 @@
-use crate::plugins::interface::{Plugin, PluginDeclaration, PluginRegistrar, CORE_VERSION, RUSTC_VERSION};
+use crate::plugins::interface::{
+    Plugin, PluginDeclaration, PluginRegistrar, CORE_VERSION, RUSTC_VERSION,
+};
 use anyhow::{Context, Result};
 use libloading::{Library, Symbol};
 use std::collections::HashMap;
@@ -45,8 +47,11 @@ impl PluginManager {
         }
 
         if decl.core_version != CORE_VERSION {
-             // We could be more lenient here, but let's be strict for now
-             println!("Warning: Plugin core version mismatch: core={}, plugin={}", CORE_VERSION, decl.core_version);
+            // We could be more lenient here, but let's be strict for now
+            println!(
+                "Warning: Plugin core version mismatch: core={}, plugin={}",
+                CORE_VERSION, decl.core_version
+            );
         }
 
         let mut registrar = ProxyRegistrar::new();
@@ -64,9 +69,12 @@ impl PluginManager {
     }
 
     pub fn list_plugins(&self) -> Vec<(&str, &str)> {
-        self.plugins.iter().map(|(n, p)| (n.as_str(), p.description())).collect()
+        self.plugins
+            .iter()
+            .map(|(n, p)| (n.as_str(), p.description()))
+            .collect()
     }
-    
+
     pub fn execute(&self, name: &str, args: &[String]) -> Result<(), String> {
         if let Some(plugin) = self.plugins.get(name) {
             plugin.execute(args)
@@ -82,7 +90,9 @@ struct ProxyRegistrar {
 
 impl ProxyRegistrar {
     fn new() -> Self {
-        Self { plugins: Vec::new() }
+        Self {
+            plugins: Vec::new(),
+        }
     }
 }
 

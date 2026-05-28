@@ -99,10 +99,16 @@ fn handle_send(args: SendArgs) -> Result<()> {
 
     // Load configuration and find wallet
     let cfg = config::load()?;
-    let wallet = cfg.wallets
+    let wallet = cfg
+        .wallets
         .iter()
         .find(|w| w.name == args.from)
-        .ok_or_else(|| anyhow::anyhow!("Wallet '{}' not found. Run `starforge wallet list`", args.from))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Wallet '{}' not found. Run `starforge wallet list`",
+                args.from
+            )
+        })?;
 
     // Validate wallet has secret key
     if wallet.secret_key.is_none() {
@@ -131,23 +137,34 @@ fn handle_send(args: SendArgs) -> Result<()> {
     // Step 1: Fetch source account info
     println!();
     p::step(1, 3, "Fetching source account info…");
-    let source_account = horizon::fetch_account(&wallet.public_key, &args.network)
-        .map_err(|e| anyhow::anyhow!(
-            "Source account not found on {}: {}\nFund it with: starforge wallet fund {}",
-            args.network, e, wallet.name
-        ))?;
+    let source_account =
+        horizon::fetch_account(&wallet.public_key, &args.network).map_err(|e| {
+            anyhow::anyhow!(
+                "Source account not found on {}: {}\nFund it with: starforge wallet fund {}",
+                args.network,
+                e,
+                wallet.name
+            )
+        })?;
 
     // Check balance if sending XLM
     if asset_code.is_none() {
-        let xlm_balance = source_account.balances.iter()
+        let xlm_balance = source_account
+            .balances
+            .iter()
             .find(|b| b.asset_type == "native")
             .map(|b| b.balance.parse::<f64>().unwrap_or(0.0))
             .unwrap_or(0.0);
-        
+
         p::kv("XLM Balance", &format!("{:.7} XLM", xlm_balance));
-        
-        if xlm_balance < amount_f64 + 0.00001 { // Reserve for fees
-            anyhow::bail!("Insufficient XLM balance. Have: {:.7}, Need: {:.7} + fees", xlm_balance, amount_f64);
+
+        if xlm_balance < amount_f64 + 0.00001 {
+            // Reserve for fees
+            anyhow::bail!(
+                "Insufficient XLM balance. Have: {:.7}, Need: {:.7} + fees",
+                xlm_balance,
+                amount_f64
+            );
         }
     }
 
@@ -157,7 +174,10 @@ fn handle_send(args: SendArgs) -> Result<()> {
         Ok(_) => p::kv("Destination", "✓ Account exists"),
         Err(_) => {
             if asset_code.is_none() {
-                p::kv("Destination", "⚠ Account will be created (requires 1 XLM minimum)");
+                p::kv(
+                    "Destination",
+                    "⚠ Account will be created (requires 1 XLM minimum)",
+                );
                 if amount_f64 < 1.0 {
                     anyhow::bail!("Destination account doesn't exist. Minimum 1 XLM required to create account.");
                 }
@@ -179,15 +199,24 @@ fn handle_send(args: SendArgs) -> Result<()> {
         &args.network,
     )?;
 
-    p::kv("Estimated Fee", &format!("{:.7} XLM", tx_result.fee as f64 / 10_000_000.0));
-    p::kv("Transaction XDR", &format!("{}...", &tx_result.transaction_xdr[..20]));
+    p::kv(
+        "Estimated Fee",
+        &format!("{:.7} XLM", tx_result.fee as f64 / 10_000_000.0),
+    );
+    p::kv(
+        "Transaction XDR",
+        &format!("{}...", &tx_result.transaction_xdr[..20]),
+    );
 
     // Confirmation prompt
     if !args.yes {
         println!();
         print!("  Proceed with payment? [y/N] ");
         use std::io::BufRead;
-        let line = std::io::stdin().lock().lines().next()
+        let line = std::io::stdin()
+            .lock()
+            .lines()
+            .next()
             .unwrap_or(Ok(String::new()))?;
         if !matches!(line.trim().to_lowercase().as_str(), "y" | "yes") {
             p::info("Payment cancelled.");
@@ -197,10 +226,13 @@ fn handle_send(args: SendArgs) -> Result<()> {
 
     // Submit transaction
     println!();
-    
+
     let mut secret_key = wallet.secret_key.as_ref().unwrap().clone();
     if secret_key.contains(':') {
-        let pwd = crypto::prompt_password(&format!("Enter password to decrypt wallet '{}'", wallet.name), false)?;
+        let pwd = crypto::prompt_password(
+            &format!("Enter password to decrypt wallet '{}'", wallet.name),
+            false,
+        )?;
         secret_key = crypto::decrypt_secret(&pwd, &secret_key)?;
     }
 
@@ -213,17 +245,24 @@ fn handle_send(args: SendArgs) -> Result<()> {
 
     println!();
     p::separator();
-    println!("  {} {}", "✓".green().bold(), "Payment sent successfully!".bright_white());
+    println!(
+        "  {} {}",
+        "✓".green().bold(),
+        "Payment sent successfully!".bright_white()
+    );
     println!();
     p::kv_accent("Transaction Hash", &submit_result.hash);
-    
+
     let explorer_base = if args.network == "mainnet" {
         "https://stellar.expert/explorer/public/tx"
     } else {
         "https://stellar.expert/explorer/testnet/tx"
     };
-    
-    p::kv("Stellar Expert", &format!("{}/{}", explorer_base, submit_result.hash));
+
+    p::kv(
+        "Stellar Expert",
+        &format!("{}/{}", explorer_base, submit_result.hash),
+    );
     p::separator();
 
     Ok(())
@@ -267,10 +306,18 @@ fn handle_history(args: HistoryArgs) -> Result<()> {
     config::validate_network(&network)?;
 
     println!();
-    println!("  {} {}", "◆".cyan().bold(), "Transaction History".white().bold());
+    println!(
+        "  {} {}",
+        "◆".cyan().bold(),
+        "Transaction History".white().bold()
+    );
     println!("  {} {}", "Account :".dimmed(), args.public_key.yellow());
     println!("  {} {}", "Network :".dimmed(), network.cyan());
-    println!("  {} {}", "Showing :".dimmed(), format!("up to {} txs", limit).white());
+    println!(
+        "  {} {}",
+        "Showing :".dimmed(),
+        format!("up to {} txs", limit).white()
+    );
 
     if args.after.is_some() || args.before.is_some() {
         let range = format!(
@@ -284,7 +331,11 @@ fn handle_history(args: HistoryArgs) -> Result<()> {
         println!("  {} {}", "Filter  :".dimmed(), "successful only".white());
     }
     if args.cursor.is_some() {
-        println!("  {} {}", "Cursor  :".dimmed(), "paginating from cursor".white());
+        println!(
+            "  {} {}",
+            "Cursor  :".dimmed(),
+            "paginating from cursor".white()
+        );
     }
 
     println!("  {}", "─".repeat(72).dimmed());
@@ -294,7 +345,11 @@ fn handle_history(args: HistoryArgs) -> Result<()> {
         cursor: args.cursor,
         after: args.after,
         before: args.before,
-        successful_only: if args.successful_only { Some(true) } else { None },
+        successful_only: if args.successful_only {
+            Some(true)
+        } else {
+            None
+        },
     };
 
     match horizon::fetch_transactions_filtered(&args.public_key, &network, filter) {
@@ -302,7 +357,10 @@ fn handle_history(args: HistoryArgs) -> Result<()> {
             println!("\n  {} {}\n", "✗".red().bold(), e.to_string().red());
         }
         Ok(txs) if txs.is_empty() => {
-            println!("\n  {} No transactions found for this account.\n", "!".yellow().bold());
+            println!(
+                "\n  {} No transactions found for this account.\n",
+                "!".yellow().bold()
+            );
         }
         Ok(txs) => {
             print_transactions(&txs, &network, args.details);
@@ -367,10 +425,18 @@ fn print_transactions(txs: &[horizon::TransactionRecord], network: &str, details
 
         if details {
             if let Some(ref src) = tx.source_account {
-                println!("  {:<14}  {}", "".dimmed(), format!("src: {}…", &src[..16]).dimmed());
+                println!(
+                    "  {:<14}  {}",
+                    "".dimmed(),
+                    format!("src: {}…", &src[..16]).dimmed()
+                );
             }
             let memo = decode_memo(tx.memo_type.as_deref(), tx.memo.as_deref());
-            println!("  {:<14}  {}", "".dimmed(), format!("memo: {}", memo).dimmed());
+            println!(
+                "  {:<14}  {}",
+                "".dimmed(),
+                format!("memo: {}", memo).dimmed()
+            );
         }
     }
 

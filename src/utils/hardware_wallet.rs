@@ -273,7 +273,11 @@ impl LedgerTransport {
         }
         let status = &response[response.len() - 2..];
         if status != SW_OK {
-            anyhow::bail!("Ledger returned APDU status {:02x}{:02x}", status[0], status[1]);
+            anyhow::bail!(
+                "Ledger returned APDU status {:02x}{:02x}",
+                status[0],
+                status[1]
+            );
         }
 
         Ok(response[..response.len() - 2].to_vec())
@@ -300,7 +304,11 @@ impl LedgerTransport {
             payload.extend_from_slice(chunk);
 
             let p1 = if index == 0 { 0x00 } else { 0x80 };
-            let p2 = if index + 1 == total_chunks { 0x00 } else { 0x80 };
+            let p2 = if index + 1 == total_chunks {
+                0x00
+            } else {
+                0x80
+            };
             let apdu = build_apdu(CLA_STELLAR, INS_SIGN_TX, p1, p2, &payload);
             let response = self.exchange(&apdu)?;
 

@@ -207,16 +207,22 @@ pub struct WalletRotationRecord {
 impl Default for Config {
     fn default() -> Self {
         let mut networks = HashMap::new();
-        networks.insert("testnet".to_string(), NetworkConfig {
-            horizon_url: "https://horizon-testnet.stellar.org".to_string(),
-            soroban_rpc_url: Some("https://soroban-testnet.stellar.org".to_string()),
-            friendbot_url: Some("https://friendbot.stellar.org".to_string()),
-        });
-        networks.insert("mainnet".to_string(), NetworkConfig {
-            horizon_url: "https://horizon.stellar.org".to_string(),
-            soroban_rpc_url: Some("https://mainnet.sorobanrpc.com".to_string()),
-            friendbot_url: None,
-        });
+        networks.insert(
+            "testnet".to_string(),
+            NetworkConfig {
+                horizon_url: "https://horizon-testnet.stellar.org".to_string(),
+                soroban_rpc_url: Some("https://soroban-testnet.stellar.org".to_string()),
+                friendbot_url: Some("https://friendbot.stellar.org".to_string()),
+            },
+        );
+        networks.insert(
+            "mainnet".to_string(),
+            NetworkConfig {
+                horizon_url: "https://horizon.stellar.org".to_string(),
+                soroban_rpc_url: Some("https://mainnet.sorobanrpc.com".to_string()),
+                friendbot_url: None,
+            },
+        );
         networks.insert(
             "docker-testnet".to_string(),
             NetworkConfig {
@@ -480,11 +486,13 @@ pub fn add_custom_network(
     if config.networks.contains_key(&name) {
         anyhow::bail!("Network '{}' already exists", name);
     }
-    config.networks.insert(name, NetworkConfig {
-        horizon_url,
-        soroban_rpc_url,
-        friendbot_url,
-    });
+    config.networks.insert(
+        name,
+        NetworkConfig {
+            horizon_url,
+            soroban_rpc_url,
+            friendbot_url,
+        },
+    );
     Ok(())
 }
-

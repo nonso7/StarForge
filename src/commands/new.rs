@@ -46,11 +46,19 @@ pub enum NewCommands {
 
 pub fn handle(cmd: NewCommands) -> Result<()> {
     match cmd {
-        NewCommands::Contract { name, template, from, search, interactive } => {
+        NewCommands::Contract {
+            name,
+            template,
+            from,
+            search,
+            interactive,
+        } => {
             if let Some(query) = search {
                 return search_templates(&query);
             }
-            let name = name.ok_or_else(|| anyhow::anyhow!("A contract name is required unless --search is used"))?;
+            let name = name.ok_or_else(|| {
+                anyhow::anyhow!("A contract name is required unless --search is used")
+            })?;
             if interactive {
                 scaffold_contract_interactive(name)
             } else {
@@ -95,10 +103,10 @@ fn search_templates(query: &str) -> Result<()> {
 // ── Interactive mode ──────────────────────────────────────────────────────────
 
 struct ContractOptions {
-    name:         String,
-    author:       String,
-    license:      String,
-    storage:      String,
+    name: String,
+    author: String,
+    license: String,
+    storage: String,
     include_tests: bool,
 }
 
@@ -144,7 +152,13 @@ fn scaffold_contract_interactive(default_name: String) -> Result<()> {
         .default(true)
         .interact()?;
 
-    let opts = ContractOptions { name, author, license, storage, include_tests };
+    let opts = ContractOptions {
+        name,
+        author,
+        license,
+        storage,
+        include_tests,
+    };
 
     // Summary + confirm
     println!();
@@ -153,7 +167,14 @@ fn scaffold_contract_interactive(default_name: String) -> Result<()> {
     println!("    Author        : {}", opts.author.cyan());
     println!("    License       : {}", opts.license.cyan());
     println!("    Storage       : {}", opts.storage.cyan());
-    println!("    Tests         : {}", if opts.include_tests { "yes".green() } else { "no".yellow() });
+    println!(
+        "    Tests         : {}",
+        if opts.include_tests {
+            "yes".green()
+        } else {
+            "no".yellow()
+        }
+    );
     println!();
 
     let confirmed = Confirm::with_theme(&theme)
@@ -258,11 +279,11 @@ fn scaffold_dapp(name: String) -> Result<()> {
     fs::write(dir.join("package.json"), dapp_package(&name))?;
 
     p::step(3, 3, "Writing app scaffold…");
-    fs::write(dir.join("index.html"),     dapp_index(&name))?;
-    fs::write(dir.join("src/main.jsx"),   dapp_main())?;
-    fs::write(dir.join("src/App.jsx"),    dapp_app(&name))?;
-    fs::write(dir.join(".gitignore"),     "node_modules/\ndist/\n")?;
-    fs::write(dir.join("README.md"),      dapp_readme(&name))?;
+    fs::write(dir.join("index.html"), dapp_index(&name))?;
+    fs::write(dir.join("src/main.jsx"), dapp_main())?;
+    fs::write(dir.join("src/App.jsx"), dapp_app(&name))?;
+    fs::write(dir.join(".gitignore"), "node_modules/\ndist/\n")?;
+    fs::write(dir.join("README.md"), dapp_readme(&name))?;
 
     println!();
     p::success(&format!("dApp '{}' scaffolded!", name));
@@ -278,7 +299,7 @@ fn to_pascal(s: &str) -> String {
         .map(|w| {
             let mut c = w.chars();
             match c.next() {
-                None    => String::new(),
+                None => String::new(),
                 Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
             }
         })
@@ -298,7 +319,8 @@ fn cargo_toml(name: &str, license: &str, author: &str) -> String {
     } else {
         format!("authors = [\"{author}\"]\n")
     };
-    format!(r#"[package]
+    format!(
+        r#"[package]
 name = "{name}"
 version = "0.1.0"
 edition = "2021"
@@ -321,7 +343,8 @@ debug-assertions = false
 panic = "abort"
 codegen-units = 1
 lto = true
-"#)
+"#
+    )
 }
 
 fn cargo_config() -> &'static str {
@@ -348,7 +371,8 @@ fn hello_world_template(name: &str, storage: &str, include_tests: bool) -> Strin
 
     pub fn get_value(env: Env, key: Symbol) -> Option<u64> {
         env.storage().persistent().get(&key)
-    }"#.to_string(),
+    }"#
+        .to_string(),
         "temporary" => r#"
     pub fn set_value(env: Env, key: Symbol, value: u64) {
         env.storage().temporary().set(&key, &value);
@@ -356,12 +380,14 @@ fn hello_world_template(name: &str, storage: &str, include_tests: bool) -> Strin
 
     pub fn get_value(env: Env, key: Symbol) -> Option<u64> {
         env.storage().temporary().get(&key)
-    }"#.to_string(),
+    }"#
+        .to_string(),
         _ => String::new(),
     };
 
     let test_module = if include_tests {
-        format!(r#"
+        format!(
+            r#"
 
 #[cfg(test)]
 mod test {{
@@ -376,7 +402,9 @@ mod test {{
         let words = client.hello(&symbol_short!("Dev"));
         assert_eq!(words, vec![&env, symbol_short!("Hello"), symbol_short!("Dev")]);
     }}
-}}"#, pascal = pascal)
+}}"#,
+            pascal = pascal
+        )
     } else {
         String::new()
     };
@@ -404,7 +432,8 @@ impl {pascal} {{
 
 fn token_template(name: &str) -> String {
     let pascal = to_pascal(name);
-    format!(r#"#![no_std]
+    format!(
+        r#"#![no_std]
 use soroban_sdk::{{contract, contractimpl, contracttype, symbol_short, Address, Env, String}};
 
 #[derive(Clone)]
@@ -499,12 +528,15 @@ mod test {{
         assert_eq!(client.balance(&user2), 300);
     }}
 }}
-"#, pascal = pascal)
+"#,
+        pascal = pascal
+    )
 }
 
 fn voting_template(name: &str) -> String {
     let pascal = to_pascal(name);
-    format!(r#"#![no_std]
+    format!(
+        r#"#![no_std]
 use soroban_sdk::{{contract, contractimpl, contracttype, Address, Env, String, Vec}};
 
 #[derive(Clone)]
@@ -627,12 +659,15 @@ mod test {{
         client.close_proposal(&proposal_id);
     }}
 }}
-"#, pascal = pascal)
+"#,
+        pascal = pascal
+    )
 }
 
 fn nft_template(name: &str) -> String {
     let pascal = to_pascal(name);
-    format!(r#"#![no_std]
+    format!(
+        r#"#![no_std]
 use soroban_sdk::{{contract, contractimpl, contracttype, Address, Env, String}};
 
 #[derive(Clone)]
@@ -740,12 +775,15 @@ mod test {{
         assert_eq!(uri, String::from_str(&env, "ipfs://token1"));
     }}
 }}
-"#, pascal = pascal)
+"#,
+        pascal = pascal
+    )
 }
 
 fn stablecoin_template(name: &str) -> String {
     let pascal = to_pascal(name);
-    format!(r#"#![no_std]
+    format!(
+        r#"#![no_std]
 use soroban_sdk::{{contract, contractimpl, contracttype, Address, Env, String}};
 
 #[derive(Clone)]
@@ -818,12 +856,15 @@ mod test {{
         assert_eq!(client.total_supply(), 600);
     }}
 }}
-"#, pascal = pascal)
+"#,
+        pascal = pascal
+    )
 }
 
 fn escrow_template(name: &str) -> String {
     let pascal = to_pascal(name);
-    format!(r#"#![no_std]
+    format!(
+        r#"#![no_std]
 use soroban_sdk::{{contract, contractimpl, contracttype, Address, Env}};
 
 #[derive(Clone, PartialEq)]
@@ -924,13 +965,16 @@ mod test {{
         assert_eq!(client.state(), EscrowState::Refunded);
     }}
 }}
-"#, pascal = pascal)
+"#,
+        pascal = pascal
+    )
 }
 
 // ── dApp scaffold files ───────────────────────────────────────────────────────
 
 fn dapp_package(name: &str) -> String {
-    format!(r#"{{
+    format!(
+        r#"{{
   "name": "{name}",
   "version": "0.1.0",
   "type": "module",
@@ -949,11 +993,13 @@ fn dapp_package(name: &str) -> String {
     "vite": "^5.4.0"
   }}
 }}
-"#)
+"#
+    )
 }
 
 fn dapp_index(name: &str) -> String {
-    format!(r#"<!DOCTYPE html>
+    format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -965,7 +1011,8 @@ fn dapp_index(name: &str) -> String {
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
-"#)
+"#
+    )
 }
 
 fn dapp_main() -> &'static str {
@@ -980,7 +1027,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 }
 
 fn dapp_app(name: &str) -> String {
-    format!(r#"import React from 'react'
+    format!(
+        r#"import React from 'react'
 
 export default function App() {{
   return (
@@ -990,11 +1038,13 @@ export default function App() {{
     </div>
   )
 }}
-"#)
+"#
+    )
 }
 
 fn dapp_readme(name: &str) -> String {
-    format!(r#"# {name}
+    format!(
+        r#"# {name}
 
 A Stellar dApp scaffolded with [starforge](https://github.com/YOUR_USERNAME/starforge).
 
@@ -1004,11 +1054,13 @@ A Stellar dApp scaffolded with [starforge](https://github.com/YOUR_USERNAME/star
 npm install
 npm run dev
 ```
-"#)
+"#
+    )
 }
 
 fn readme(name: &str, template: &str, source: &str) -> String {
-    format!(r#"# {name}
+    format!(
+        r#"# {name}
 
 A Soroban smart contract scaffolded with [starforge](https://github.com/YOUR_USERNAME/starforge).
 
@@ -1034,7 +1086,12 @@ starforge deploy \
 
 Template: `{template}`
 Source: `{source}`
-"#, name = name, snake = name.replace('-', "_"), template = template, source = source)
+"#,
+        name = name,
+        snake = name.replace('-', "_"),
+        template = template,
+        source = source
+    )
 }
 
 // ── Template Marketplace ──────────────────────────────────────────────────────
@@ -1042,105 +1099,124 @@ Source: `{source}`
 fn handle_template_search(query: &str, tags: Option<&str>) -> Result<()> {
     p::header("Template Marketplace — Search");
     p::kv("Query", query);
-    
+
     let tag_list = tags.map(|t| {
         t.split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
     });
-    
+
     if let Some(ref tags) = tag_list {
         p::kv("Tags", &tags.join(", "));
     }
-    
+
     println!();
-    
+
     let results = templates::search_templates(query, tag_list.as_deref())?;
-    
+
     if results.is_empty() {
         p::info("No templates found matching your search.");
         p::info("Try: starforge template publish ./my-template");
         return Ok(());
     }
-    
+
     p::separator();
     println!("  Found {} template(s):\n", results.len());
-    
+
     for (i, tmpl) in results.iter().enumerate() {
-        let verified = if tmpl.verified { " ✓".green() } else { "".normal() };
+        let verified = if tmpl.verified {
+            " ✓".green()
+        } else {
+            "".normal()
+        };
         println!("  {}. {}{}", i + 1, tmpl.name.cyan().bold(), verified);
         println!("     {}", tmpl.description.dimmed());
-        println!("     {} • {} • {} downloads", 
+        println!(
+            "     {} • {} • {} downloads",
             tmpl.version.yellow(),
             tmpl.author.dimmed(),
             tmpl.downloads
         );
-        
+
         if !tmpl.tags.is_empty() {
             println!("     Tags: {}", tmpl.tags.join(", ").bright_black());
         }
-        
+
         if i < results.len() - 1 {
             println!();
         }
     }
-    
+
     p::separator();
     println!();
     p::info("Use a template:");
-    println!("  {}", format!("starforge new contract my-project --template {} --from marketplace", 
-        results[0].name).cyan());
-    
+    println!(
+        "  {}",
+        format!(
+            "starforge new contract my-project --template {} --from marketplace",
+            results[0].name
+        )
+        .cyan()
+    );
+
     Ok(())
 }
 
 fn scaffold_from_marketplace(name: String, template_name: String) -> Result<()> {
     p::header(&format!("Scaffolding from Marketplace: {}", template_name));
-    
+
     // Get template from registry
-    let template = templates::get_template(&template_name)
-        .with_context(|| format!("Template '{}' not found. Try: starforge new contract --search {}", 
-            template_name, template_name))?;
-    
+    let template = templates::get_template(&template_name).with_context(|| {
+        format!(
+            "Template '{}' not found. Try: starforge new contract --search {}",
+            template_name, template_name
+        )
+    })?;
+
     let dir = Path::new(&name);
     if dir.exists() {
         anyhow::bail!("Directory '{}' already exists", name);
     }
-    
+
     p::separator();
     p::kv("Template", &template.name);
     p::kv("Version", &template.version);
     p::kv("Author", &template.author);
     p::kv("Description", &template.description);
     p::separator();
-    
+
     println!();
     p::step(1, 3, "Fetching template...");
-    
+
     // Create temporary directory for template
-    let temp_dir = std::env::temp_dir().join(format!("starforge-template-{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("starforge-template-{}", uuid::Uuid::new_v4()));
     templates::fetch_template(&template, &temp_dir)?;
-    
+
     p::step(2, 3, "Validating template structure...");
     templates::validate_template_structure(&temp_dir)?;
-    
+
     p::step(3, 3, "Copying template to project directory...");
-    
+
     // Copy template to target directory
     fs::create_dir_all(dir)?;
     copy_template_contents(&temp_dir, dir, &name)?;
-    
+
     // Clean up temp directory
     fs::remove_dir_all(&temp_dir).ok();
-    
+
     // Update download count
     let mut registry = templates::load_registry()?;
-    if let Some(entry) = registry.templates.iter_mut().find(|t| t.name == template.name) {
+    if let Some(entry) = registry
+        .templates
+        .iter_mut()
+        .find(|t| t.name == template.name)
+    {
         entry.downloads += 1;
         templates::save_registry(&registry)?;
     }
-    
+
     println!();
     p::success(&format!("Contract '{}' scaffolded from marketplace!", name));
     println!();
@@ -1152,7 +1228,7 @@ fn scaffold_from_marketplace(name: String, template_name: String) -> Result<()> 
         name.replace('-', "_")
     ));
     println!();
-    
+
     Ok(())
 }
 
@@ -1161,29 +1237,29 @@ fn copy_template_contents(src: &Path, dst: &Path, project_name: &str) -> Result<
         let entry = entry?;
         let path = entry.path();
         let file_name = entry.file_name();
-        
+
         // Skip .git and target directories
         if file_name == ".git" || file_name == "target" {
             continue;
         }
-        
+
         let dest_path = dst.join(&file_name);
-        
+
         if path.is_dir() {
             fs::create_dir_all(&dest_path)?;
             copy_template_contents(&path, &dest_path, project_name)?;
         } else {
             // Read file content
             let mut content = fs::read_to_string(&path)?;
-            
+
             // Replace template placeholders
             content = content.replace("{{PROJECT_NAME}}", project_name);
             content = content.replace("{{PROJECT_NAME_SNAKE}}", &project_name.replace('-', "_"));
             content = content.replace("{{PROJECT_NAME_PASCAL}}", &to_pascal(project_name));
-            
+
             fs::write(&dest_path, content)?;
         }
     }
-    
+
     Ok(())
 }

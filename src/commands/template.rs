@@ -111,7 +111,10 @@ fn search(query: String) -> Result<()> {
         return Ok(());
     }
 
-    p::info(&format!("Found {} result(s), ranked by popularity:", results.len()));
+    p::info(&format!(
+        "Found {} result(s), ranked by popularity:",
+        results.len()
+    ));
     println!();
 
     for (i, template) in results.iter().enumerate() {

@@ -108,7 +108,10 @@ fn uninstall(name: String) -> Result<()> {
     reg.plugins.retain(|p| p.name != name);
 
     if reg.plugins.len() == before {
-        anyhow::bail!("Plugin '{}' is not installed. Run `starforge plugin list` to see installed plugins.", name);
+        anyhow::bail!(
+            "Plugin '{}' is not installed. Run `starforge plugin list` to see installed plugins.",
+            name
+        );
     }
 
     registry::save_registry(&reg)?;

@@ -41,8 +41,12 @@ pub fn handle(args: MonitorArgs) -> Result<()> {
     println!();
 
     match (&args.contract, &args.wallet) {
-        (Some(contract_id), None) => monitor_contract(contract_id, args.events.as_deref(), network, args.interval),
-        (None, Some(wallet_name)) => monitor_wallet(wallet_name, args.threshold, network, args.interval),
+        (Some(contract_id), None) => {
+            monitor_contract(contract_id, args.events.as_deref(), network, args.interval)
+        }
+        (None, Some(wallet_name)) => {
+            monitor_wallet(wallet_name, args.threshold, network, args.interval)
+        }
         _ => anyhow::bail!("Specify either --contract or --wallet (but not both)"),
     }
 }
@@ -74,7 +78,8 @@ fn monitor_contract(
         rpc_url
     ));
 
-    let mut stream = SorobanEventStream::new(rpc_url, contract_id.to_string()).with_poll_interval(interval);
+    let mut stream =
+        SorobanEventStream::new(rpc_url, contract_id.to_string()).with_poll_interval(interval);
     loop {
         let batch = stream.next_batch()?;
         for event in batch {
@@ -133,7 +138,10 @@ fn monitor_wallet(
             .and_then(|b| b.balance.parse::<f64>().ok())
             .unwrap_or(0.0);
 
-        if last_balance.map(|b| (b - native).abs() > f64::EPSILON).unwrap_or(true) {
+        if last_balance
+            .map(|b| (b - native).abs() > f64::EPSILON)
+            .unwrap_or(true)
+        {
             notifications::info(&format!("XLM balance: {:.7}", native));
             last_balance = Some(native);
         }

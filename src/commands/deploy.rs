@@ -78,9 +78,10 @@ pub fn handle(args: DeployArgs) -> Result<()> {
     let mut wasm_size_kb = wasm_bytes.len() as f64 / 1024.0;
 
     if args.optimize {
-        let optimized_path = args
-            .wasm
-            .with_file_name(format!("{}-optimized.wasm", args.wasm.file_stem().unwrap_or_default().to_string_lossy()));
+        let optimized_path = args.wasm.with_file_name(format!(
+            "{}-optimized.wasm",
+            args.wasm.file_stem().unwrap_or_default().to_string_lossy()
+        ));
         p::header("WASM Optimization");
         p::kv("Input WASM", &args.wasm.display().to_string());
         p::kv("Output WASM", &optimized_path.display().to_string());
@@ -91,7 +92,10 @@ pub fn handle(args: DeployArgs) -> Result<()> {
         println!();
         p::success("Optimization pass completed");
         p::kv("Input size", &format!("{} bytes", result.input_size_bytes));
-        p::kv("Output size", &format!("{} bytes", result.output_size_bytes));
+        p::kv(
+            "Output size",
+            &format!("{} bytes", result.output_size_bytes),
+        );
         p::separator();
     }
 

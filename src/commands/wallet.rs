@@ -238,7 +238,11 @@ pub fn handle(cmd: WalletCommands) -> Result<()> {
 
 fn connect_hardware(device: hardware_wallet::HardwareWalletKind) -> Result<()> {
     p::header("Hardware Wallet â€” Connect");
-    p::step(1, 3, &format!("Initializing HID subsystem for {}â€¦", device));
+    p::step(
+        1,
+        3,
+        &format!("Initializing HID subsystem for {}â€¦", device),
+    );
     let info = hardware_wallet::connect(device)?;
     p::step(
         2,
@@ -538,7 +542,10 @@ fn fund_wallet(name: String) -> Result<()> {
         .map(|w| w.public_key.clone())
         .ok_or_else(|| anyhow::anyhow!("Wallet '{}' not found", name))?;
 
-    p::info(&format!("Funding '{}' via configured network faucet…", name));
+    p::info(&format!(
+        "Funding '{}' via configured network faucet…",
+        name
+    ));
     horizon::fund_account(&public_key, &cfg.network)?;
 
     if let Some(w) = cfg.wallets.iter_mut().find(|w| w.name == name) {
@@ -620,14 +627,20 @@ fn rotate_wallet(
     let (public_key, secret_key) = generate_keypair();
 
     let secret_to_store = if encrypt {
-        let pwd =
-            crypto::prompt_password("Set a secure passphrase to encrypt the rotated wallet", true)?;
+        let pwd = crypto::prompt_password(
+            "Set a secure passphrase to encrypt the rotated wallet",
+            true,
+        )?;
         crypto::encrypt_secret(&pwd, &secret_key)?
     } else {
         secret_key.clone()
     };
 
-    p::step(2, steps, "Archiving previous public key in config metadata...");
+    p::step(
+        2,
+        steps,
+        "Archiving previous public key in config metadata...",
+    );
     {
         let wallet = &mut cfg.wallets[wallet_index];
         wallet.rotation_history.push(config::WalletRotationRecord {
@@ -1098,4 +1111,3 @@ fn multisig_submit(name: String, transaction: PathBuf, network: Option<String>) 
     ));
     Ok(())
 }
-

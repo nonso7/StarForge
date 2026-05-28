@@ -51,4 +51,3 @@ impl LocalSorobanSandbox {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 }
-

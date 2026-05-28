@@ -97,4 +97,3 @@ pub struct SorobanEvent {
     pub topic: Vec<String>,
     pub value: serde_json::Value,
 }
-
