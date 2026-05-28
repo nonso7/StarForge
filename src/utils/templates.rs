@@ -11,60 +11,14 @@ pub struct TemplateRegistry {
     pub templates: Vec<TemplateEntry>,
 }
 
-/// Describes where a template's source files live.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum TemplateSource {
-    /// Clone from a remote git repository.
     Git {
         url: String,
         #[serde(default)]
         branch: Option<String>,
     },
-    /// Copy from a local directory on disk.
-    Local { path: String },
-    /// A built-in template bundled with StarForge.
-    Builtin { id: String },
-}
-
-impl std::fmt::Display for TemplateSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TemplateSource::Git { url, branch } => match branch {
-                Some(b) => write!(f, "git:{} (branch: {})", url, b),
-                None => write!(f, "git:{}", url),
-            },
-            TemplateSource::Local { path } => write!(f, "local:{}", path),
-            TemplateSource::Builtin { id } => write!(f, "builtin:{}", id),
-        }
-    }
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TemplateSource {
-    Git { url: String, branch: Option<String> },
-    Local { path: String },
-    Builtin { id: String },
-}
-
-impl std::fmt::Display for TemplateSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TemplateSource::Git { url, branch } => {
-                if let Some(branch) = branch {
-                    write!(f, "git:{}@{}", url, branch)
-                } else {
-                    write!(f, "git:{}", url)
-                }
-            }
-            TemplateSource::Local { path } => write!(f, "local:{}", path),
-            TemplateSource::Builtin { id } => write!(f, "builtin:{}", id),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TemplateSource {
-    Git { url: String, branch: Option<String> },
     Local { path: String },
     Builtin { id: String },
 }
@@ -91,8 +45,8 @@ pub struct TemplateEntry {
     pub description: String,
     pub author: String,
     pub version: String,
-    pub author: String,
-    pub source: String,
+    #[serde(default)]
+    pub source: serde_json::Value,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -101,6 +55,28 @@ pub struct TemplateEntry {
     pub downloads: u64,
     #[serde(default)]
     pub verified: bool,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+    #[serde(default)]
+    pub scaffold: Option<ScaffoldConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScaffoldConfig {
+    pub questions: Vec<ScaffoldQuestion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScaffoldQuestion {
+    pub name: String,
+    pub prompt: String,
+    pub r#type: String,
+    #[serde(default)]
+    pub default: Option<String>,
+    #[serde(default)]
+    pub choices: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -126,26 +102,6 @@ fn registry_path() -> Result<PathBuf> {
     Ok(dir.join("registry.json"))
 }
 
-fn templates_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
-    let dir = home.join(".starforge").join("templates").join("storage");
-    if !dir.exists() {
-        fs::create_dir_all(&dir).with_context(|| format!("Failed to create {}", dir.display()))?;
-    }
-    Ok(dir)
-}
-
-#[allow(dead_code)]
-fn template_storage_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
-    let dir = home.join(".starforge").join("templates").join("storage");
-    if !dir.exists() {
-        fs::create_dir_all(&dir).with_context(|| format!("Failed to create {}", dir.display()))?;
-    }
-    Ok(dir)
-}
-
-/// Returns the user-level templates directory where published templates are stored.
 fn templates_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
     let dir = home.join(".starforge").join("templates").join("local");
@@ -208,7 +164,6 @@ pub fn search_templates(query: &str, tags: Option<&[String]>) -> Result<Vec<Temp
         })
         .collect();
 
-    // Sort by downloads (popularity) and verified status
     results.sort_by(|a, b| match (a.verified, b.verified) {
         (true, false) => std::cmp::Ordering::Less,
         (false, true) => std::cmp::Ordering::Greater,
@@ -228,6 +183,43 @@ pub fn get_template(name: &str) -> Result<TemplateEntry> {
         .ok_or_else(|| anyhow::anyhow!("Template '{}' not found in registry", name))
 }
 
+pub fn get_template_by_name_and_version(name: &str, version: Option<&str>) -> Result<TemplateEntry> {
+    let registry = load_registry()?;
+    let mut matching: Vec<_> = registry
+        .templates
+        .into_iter()
+        .filter(|t| t.name == name)
+        .collect();
+
+    if matching.is_empty() {
+        return Err(anyhow::anyhow!("Template '{}' not found", name));
+    }
+
+    if let Some(v) = version {
+        matching.sort_by(|a, b| {
+            semver_cmp(&b.version, &a.version)
+        });
+        matching.into_iter().find(|t| t.version == v)
+            .ok_or_else(|| anyhow::anyhow!("Template '{}@{}' not found", name, v))
+    } else {
+        matching.sort_by(|a, b| {
+            semver_cmp(&b.version, &a.version)
+        });
+        Ok(matching.into_iter().next().unwrap())
+    }
+}
+
+fn semver_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let parse_version = |v: &str| {
+        v.strip_prefix('v')
+            .unwrap_or(v)
+            .split('.')
+            .filter_map(|s| s.parse::<u64>().ok())
+            .collect::<Vec<_>>()
+    };
+    parse_version(a).cmp(&parse_version(b))
+}
+
 pub fn template_source_content(name: &str) -> Result<Option<String>> {
     let entry = match get_template(name) {
         Ok(entry) => entry,
@@ -235,32 +227,49 @@ pub fn template_source_content(name: &str) -> Result<Option<String>> {
     };
 
     let content = match &entry.source {
-        TemplateSource::Builtin { id } => {
-            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("templates")
-                .join("examples")
-                .join(id)
-                .join("src")
-                .join("lib.rs");
-            if path.exists() {
-                Some(fs::read_to_string(&path).with_context(|| {
-                    format!("Failed to read built-in template at {}", path.display())
-                })?)
+        serde_json::Value::Object(obj) => {
+            if let Some(type_val) = obj.get("type").and_then(|v| v.as_str()) {
+                match type_val {
+                    "builtin" => {
+                        if let Some(id) = obj.get("id").and_then(|v| v.as_str()) {
+                            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                                .join("templates")
+                                .join("examples")
+                                .join(id)
+                                .join("src")
+                                .join("lib.rs");
+                            if path.exists() {
+                                Some(fs::read_to_string(&path).with_context(|| {
+                                    format!("Failed to read built-in template at {}", path.display())
+                                })?)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    "local" => {
+                        if let Some(path_val) = obj.get("path").and_then(|v| v.as_str()) {
+                            let lib_rs = Path::new(path_val).join("src").join("lib.rs");
+                            if lib_rs.exists() {
+                                Some(fs::read_to_string(&lib_rs).with_context(|| {
+                                    format!("Failed to read template source at {}", lib_rs.display())
+                                })?)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
             } else {
                 None
             }
         }
-        TemplateSource::Local { path } => {
-            let lib_rs = Path::new(path).join("src").join("lib.rs");
-            if lib_rs.exists() {
-                Some(fs::read_to_string(&lib_rs).with_context(|| {
-                    format!("Failed to read template source at {}", lib_rs.display())
-                })?)
-            } else {
-                None
-            }
-        }
-        TemplateSource::Git { .. } => None,
+        _ => None,
     };
 
     Ok(content)
@@ -269,12 +278,9 @@ pub fn template_source_content(name: &str) -> Result<Option<String>> {
 pub fn add_template(entry: TemplateEntry) -> Result<()> {
     let mut registry = load_registry()?;
 
-    // Check if template already exists
-    if let Some(existing) = registry.templates.iter_mut().find(|t| t.name == entry.name) {
-        // Update existing template
+    if let Some(existing) = registry.templates.iter_mut().find(|t| t.name == entry.name && t.version == entry.version) {
         *existing = entry;
     } else {
-        // Add new template
         registry.templates.push(entry);
     }
 
@@ -295,14 +301,60 @@ pub fn remove_template(name: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn update_template(name: &str) -> Result<()> {
+    let entry = get_template(name)?;
+
+    match &entry.source {
+        serde_json::Value::Object(obj) => {
+            if let Some(type_val) = obj.get("type").and_then(|v| v.as_str()) {
+                match type_val {
+                    "git" => {
+                        if let Some(url) = obj.get("url").and_then(|v| v.as_str()) {
+                            let branch = obj.get("branch").and_then(|v| v.as_str());
+                            let dest = std::env::temp_dir().join(&entry.name);
+                            if dest.exists() {
+                                fs::remove_dir_all(&dest).ok();
+                            }
+                            fetch_git_template(url, branch, &dest)?;
+                        }
+                    }
+                    _ => anyhow::bail!("Template source type '{}' does not support updates", type_val),
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
 #[allow(dead_code)]
 pub fn fetch_template(entry: &TemplateEntry, dest: &Path) -> Result<()> {
     match &entry.source {
-        TemplateSource::Git { url, branch } => fetch_git_template(url, branch.as_deref(), dest),
-        TemplateSource::Local { path } => fetch_local_template(Path::new(path), dest),
-        TemplateSource::Builtin { id } => {
-            anyhow::bail!("Built-in template '{}' should be handled separately", id)
+        serde_json::Value::Object(obj) => {
+            if let Some(type_val) = obj.get("type").and_then(|v| v.as_str()) {
+                match type_val {
+                    "git" => {
+                        let url = obj.get("url").and_then(|v| v.as_str())
+                            .ok_or_else(|| anyhow::anyhow!("Git URL not found"))?;
+                        let branch = obj.get("branch").and_then(|v| v.as_str());
+                        fetch_git_template(url, branch, dest)
+                    }
+                    "local" => {
+                        let path = obj.get("path").and_then(|v| v.as_str())
+                            .ok_or_else(|| anyhow::anyhow!("Local path not found"))?;
+                        fetch_local_template(Path::new(path), dest)
+                    }
+                    "builtin" => {
+                        anyhow::bail!("Built-in template should be handled separately")
+                    }
+                    _ => anyhow::bail!("Unknown template source type"),
+                }
+            } else {
+                anyhow::bail!("Template source type not specified")
+            }
         }
+        _ => anyhow::bail!("Invalid template source"),
     }
 }
 
@@ -330,7 +382,6 @@ fn fetch_git_template(url: &str, branch: Option<&str>, dest: &Path) -> Result<()
         anyhow::bail!("Git clone failed: {}", stderr);
     }
 
-    // Remove .git directory to clean up
     let git_dir = dest.join(".git");
     if git_dir.exists() {
         fs::remove_dir_all(&git_dir).ok();
@@ -361,7 +412,6 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         let path = entry.path();
         let file_name = entry.file_name();
 
-        // Skip .git directories
         if file_name == ".git" {
             continue;
         }
@@ -390,7 +440,6 @@ pub fn publish_template(
         anyhow::bail!("Template path does not exist: {}", template_path.display());
     }
 
-    // Copy template to local templates directory
     let templates_dir = templates_dir()?;
     let dest = templates_dir.join(&name);
 
@@ -403,22 +452,24 @@ pub fn publish_template(
 
     copy_dir_recursive(template_path, &dest)?;
 
-    // Create template entry
+    let scaffold = load_scaffold_config(&dest);
+
     let entry = TemplateEntry {
         name: name.clone(),
         version,
         description,
         author,
         tags,
-        source: TemplateSource::Local {
-            path: dest.to_string_lossy().to_string(),
-        },
+        source: serde_json::json!({
+            "type": "local",
+            "path": dest.to_string_lossy().to_string()
+        }),
         path: None,
         created_at: chrono::Utc::now().to_rfc3339(),
         updated_at: chrono::Utc::now().to_rfc3339(),
         downloads: 0,
         verified: false,
-        path: None,
+        scaffold,
     };
 
     add_template(entry.clone())?;
@@ -426,9 +477,20 @@ pub fn publish_template(
     Ok(entry)
 }
 
+fn load_scaffold_config(template_path: &Path) -> Option<ScaffoldConfig> {
+    let scaffold_path = template_path.join("scaffold.json");
+    if !scaffold_path.exists() {
+        return None;
+    }
+
+    match fs::read_to_string(&scaffold_path) {
+        Ok(content) => serde_json::from_str(&content).ok(),
+        Err(_) => None,
+    }
+}
+
 #[allow(dead_code)]
 pub fn validate_template_structure(path: &Path) -> Result<()> {
-    // Check for required files
     let cargo_toml = path.join("Cargo.toml");
     if !cargo_toml.exists() {
         anyhow::bail!("Template must contain Cargo.toml");
@@ -460,18 +522,18 @@ mod tests {
             description: "Uniswap V2 DEX implementation".to_string(),
             author: "DeFi Team".to_string(),
             tags: vec!["defi".to_string(), "dex".to_string(), "amm".to_string()],
-            source: TemplateSource::Builtin {
-                id: "uniswap-v2".to_string(),
-            },
+            source: serde_json::json!({
+                "type": "builtin",
+                "id": "uniswap-v2"
+            }),
             path: None,
             created_at: "2025-01-01T00:00:00Z".to_string(),
             updated_at: "2025-01-01T00:00:00Z".to_string(),
             downloads: 100,
             verified: true,
-            path: None,
+            scaffold: None,
         });
 
-        // Test name search
         let results: Vec<_> = registry
             .templates
             .iter()
@@ -479,7 +541,6 @@ mod tests {
             .collect();
         assert_eq!(results.len(), 1);
 
-        // Test tag search
         let results: Vec<_> = registry
             .templates
             .iter()

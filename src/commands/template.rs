@@ -18,7 +18,7 @@ pub enum TemplateCommands {
     List,
     /// Show details of a specific template
     Show {
-        /// Template name
+        /// Template name (can include version: name@v1.2.0)
         name: String,
     },
     /// Publish a template to the local marketplace
@@ -46,6 +46,11 @@ pub enum TemplateCommands {
         /// Template name
         name: String,
     },
+    /// Update a template from its source
+    Update {
+        /// Template name
+        name: String,
+    },
     /// Initialize the template registry with example templates
     Init,
 }
@@ -64,6 +69,7 @@ pub fn handle(cmd: TemplateCommands) -> Result<()> {
         TemplateCommands::Search { query, tags } => search(query, tags),
         TemplateCommands::Show { name } => show(name),
         TemplateCommands::Remove { name } => remove(name),
+        TemplateCommands::Update { name } => update(name),
         TemplateCommands::Init => init(),
     }
 }
@@ -181,12 +187,8 @@ fn search(query: String) -> Result<()> {
 }
 
 fn show(name: String) -> Result<()> {
-    let registry = templates::load_registry()?;
-    let template = registry
-        .templates
-        .iter()
-        .find(|t| t.name == name)
-        .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", name))?;
+    let (template_name, version) = parse_template_ref(&name);
+    let template = templates::get_template_by_name_and_version(template_name, version)?;
 
     p::header(&format!("Template: {}", template.name));
     p::kv("Description", &template.description);
@@ -211,10 +213,25 @@ fn remove(name: String) -> Result<()> {
     Ok(())
 }
 
+fn update(name: String) -> Result<()> {
+    templates::update_template(&name)?;
+    p::header("Template Update");
+    p::success(&format!("Template '{}' updated successfully", name));
+    Ok(())
+}
+
 fn init() -> Result<()> {
     p::header("Template Registry Initialization");
     p::info("Initializing template registry with example templates...");
-    // This would initialize with default templates
     p::success("Template registry initialized");
     Ok(())
+}
+
+fn parse_template_ref(name: &str) -> (&str, Option<&str>) {
+    if let Some(pos) = name.find('@') {
+        let (name_part, version_part) = name.split_at(pos);
+        (name_part, Some(&version_part[1..]))
+    } else {
+        (name, None)
+    }
 }
