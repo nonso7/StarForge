@@ -589,6 +589,7 @@ starforge new contract <NAME> [OPTIONS]
 - `--from <SOURCE>` - Use template from source (`marketplace`)
 - `--search <QUERY>` - Search for templates
 - `--tags <TAGS>` - Filter templates by tags
+- `--ci` - Generate `.github/workflows/stellar-ci.yml` (cargo test + WASM size checks)
 
 **Examples:**
 ```bash
@@ -606,6 +607,9 @@ starforge new contract my-dex --template uniswap-v2 --from marketplace
 
 # Search templates
 starforge new contract --search defi --tags dex
+
+# Include GitHub Actions CI
+starforge new contract my-contract --ci
 ```
 
 ---
@@ -788,6 +792,45 @@ starforge tx send \
 
 # Skip confirmation
 starforge tx send --from alice --to GDEF... --amount 10 --yes
+```
+
+---
+
+### `starforge tx batch`
+
+Submit multiple Stellar operations in a single transaction from a JSON file.
+
+**Usage:**
+```bash
+starforge tx batch --file <FILE> --from <WALLET> [OPTIONS]
+```
+
+**Options:**
+- `--file <FILE>` - Path to operations JSON (required)
+- `--from <WALLET>` - Source wallet name (required)
+- `--network <NETWORK>` - Network to use (`testnet` or `mainnet`, default: `testnet`)
+- `--yes` - Skip confirmation prompt
+
+**Operations file schema:**
+```json
+{
+  "operations": [
+    {
+      "type": "payment",
+      "to": "GDEF...",
+      "amount": "100",
+      "asset": "XLM"
+    }
+  ]
+}
+```
+
+Supported operation types: `payment` (`to`, `amount`, optional `asset` as `XLM` or `CODE:ISSUER`).
+
+**Examples:**
+```bash
+starforge tx batch --file operations.json --from alice
+starforge tx batch --file ops.json --from alice --network testnet --yes
 ```
 
 ---
