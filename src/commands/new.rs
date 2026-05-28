@@ -1310,6 +1310,60 @@ fn scaffold_from_marketplace(name: String, template_name: String) -> Result<()> 
     Ok(())
 }
 
+/// GitHub Actions workflow for Soroban contract projects (cargo test + WASM size gate).
+fn stellar_ci_workflow(crate_name: &str) -> String {
+    let wasm_path = format!(
+        "target/wasm32-unknown-unknown/release/{}.wasm",
+        crate_name.replace('-', "_")
+    );
+    format!(
+        r#"name: Stellar CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  MAX_WASM_BYTES: 131072
+
+jobs:
+  test-and-wasm:
+    name: Test & WASM size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli --features opt
+
+      - name: Run unit tests
+        run: cargo test --locked
+
+      - name: Build Soroban WASM
+        run: stellar contract build
+
+      - name: Check WASM artifact size
+        run: |
+          WASM="{wasm_path}"
+          if [ ! -f "$WASM" ]; then
+            echo "WASM not found at $WASM"
+            exit 1
+          fi
+          SIZE=$(wc -c < "$WASM" | tr -d ' ')
+          echo "WASM size: $SIZE bytes (limit: $MAX_WASM_BYTES)"
+          if [ "$SIZE" -gt "$MAX_WASM_BYTES" ]; then
+            echo "WASM exceeds $MAX_WASM_BYTES byte limit"
+            exit 1
+          fi
+"#
+    )
+}
+
 #[allow(dead_code)]
 fn copy_template_contents(src: &Path, dst: &Path, project_name: &str) -> Result<()> {
     for entry in fs::read_dir(src)? {
