@@ -13,6 +13,14 @@ use stellar_strkey::ed25519::{PrivateKey as StellarPrivateKey, PublicKey as Stel
 
 const WALLET_BACKUP_VERSION: &str = "1";
 
+fn kdf_options(mem: Option<u32>, iterations: Option<u32>) -> Option<crypto::KdfOptions> {
+    if mem.is_none() && iterations.is_none() {
+        None
+    } else {
+        Some(crypto::KdfOptions { mem, iterations })
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct WalletBackup {
     version: String,
@@ -436,7 +444,7 @@ fn parse_word_count(words: &str) -> Result<mnemonic::WordCount> {
 
 fn prompt_recovery_phrase() -> Result<String> {
     use dialoguer::Input;
-    let phrase = Input::new()
+    let phrase: String = Input::new()
         .with_prompt("Enter recovery phrase (12 or 24 words)")
         .interact_text()
         .map_err(|e| anyhow::anyhow!("Failed to read recovery phrase: {}", e))?;
@@ -506,7 +514,7 @@ fn create(
         }
         println!();
         let pwd = crypto::prompt_passphrase("Set a passphrase to encrypt this wallet", strict)?;
-        crypto::encrypt_secret(&pwd, &secret_key, kdf_options(mem, iterations).as_ref())?
+        crypto::encrypt_secret(&pwd, &secret_key, None)?
     } else {
         secret_key.clone()
     };
@@ -1022,7 +1030,7 @@ fn rotate_wallet(
             p::warn("Friendbot is not available on Mainnet. Skipping fund step.");
         } else {
             p::step(3, steps, "Funding the replacement wallet via Friendbot...");
-            match horizon::fund_account(&public_key) {
+            match horizon::fund_account(&public_key, &network) {
                 Ok(_) => {
                     if let Some(wallet) = cfg.wallets.iter_mut().find(|wallet| wallet.name == name)
                     {
@@ -1132,7 +1140,7 @@ fn import_from_mnemonic(
     let secret_to_store = if encrypt {
         println!();
         let pwd = crypto::prompt_passphrase("Set a passphrase to encrypt this wallet", false)?;
-        crypto::encrypt_secret(&pwd, &secret_key)?
+        crypto::encrypt_secret(&pwd, &secret_key, None)?
     } else {
         secret_key
     };

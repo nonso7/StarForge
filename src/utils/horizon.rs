@@ -147,6 +147,8 @@ pub fn fetch_transactions(
         TxFilter {
             limit,
             cursor: None,
+            order: None,
+            type_filter: None,
             after: None,
             before: None,
             successful_only: None,
