@@ -6,6 +6,7 @@ pub mod logging;
 pub mod mnemonic;
 pub mod mock_soroban;
 pub mod multisig;
+pub mod node;
 pub mod notifications;
 pub mod optimizer;
 pub mod print;
