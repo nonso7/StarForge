@@ -19,8 +19,12 @@ pub enum TemplateSource {
         #[serde(default)]
         branch: Option<String>,
     },
-    Local { path: String },
-    Builtin { id: String },
+    Local {
+        path: String,
+    },
+    Builtin {
+        id: String,
+    },
 }
 
 impl std::fmt::Display for TemplateSource {
@@ -92,6 +96,8 @@ struct TemplateManifest {
 
 #[allow(dead_code)]
 const DEFAULT_REGISTRY: &str = include_str!("../../templates/registry.json");
+const DEFAULT_REGISTRY_URL: &str =
+    "https://starforge-protocol.github.io/starforge/templates/registry.json";
 
 fn registry_path() -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
@@ -112,15 +118,55 @@ fn templates_dir() -> Result<PathBuf> {
 }
 
 pub fn load_registry() -> Result<TemplateRegistry> {
-    let path = registry_path()?;
-    if !path.exists() {
-        return Ok(TemplateRegistry::default());
+    // Determine remote registry URL, falling back to the default global index.
+    let remote_url = std::env::var("STARFORGE_TEMPLATE_REGISTRY_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_REGISTRY_URL.to_string());
+
+    // Check if user forced a refresh
+    let force_refresh = std::env::var("STARFORGE_TEMPLATE_REGISTRY_FORCE_REFRESH").is_ok();
+    let cache_path = registry_path()?;
+
+    // Use cache if it exists and is fresh and we are not forcing a refresh.
+    if !force_refresh {
+        if let Ok(metadata) = fs::metadata(&cache_path) {
+            if let Ok(modified) = metadata.modified() {
+                use std::time::{Duration, SystemTime};
+                let ttl = Duration::from_secs(24 * 60 * 60); // 24 hours
+                if SystemTime::now()
+                    .duration_since(modified)
+                    .unwrap_or_else(|_| ttl)
+                    < ttl
+                {
+                    let contents = fs::read_to_string(&cache_path).with_context(|| {
+                        format!("Failed to read cached registry at {}", cache_path.display())
+                    })?;
+                    let registry: TemplateRegistry = serde_json::from_str(&contents)
+                        .with_context(|| "Failed to parse cached template registry")?;
+                    return Ok(registry);
+                }
+            }
+        }
     }
-    let contents = fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read registry at {}", path.display()))?;
-    let registry: TemplateRegistry =
-        serde_json::from_str(&contents).with_context(|| "Failed to parse template registry")?;
-    Ok(registry)
+
+    // Either forced refresh or cache is missing/old – attempt to fetch remote.
+    match fetch_and_cache_remote(&remote_url) {
+        Ok(registry) => Ok(registry),
+        Err(fetch_err) => {
+            // If the remote fetch failed but a cached registry exists, fall back to it.
+            if cache_path.exists() {
+                let contents = fs::read_to_string(&cache_path).with_context(|| {
+                    format!("Failed to read cached registry at {}", cache_path.display())
+                })?;
+                let registry: TemplateRegistry = serde_json::from_str(&contents)
+                    .with_context(|| "Failed to parse cached template registry")?;
+                return Ok(registry);
+            }
+            // If no cache is available, propagate the fetch error.
+            Err(fetch_err)
+        }
+    }
 }
 
 pub fn save_registry(registry: &TemplateRegistry) -> Result<()> {
@@ -134,6 +180,39 @@ pub fn save_registry(registry: &TemplateRegistry) -> Result<()> {
     fs::write(&path, contents)
         .with_context(|| format!("Failed to write registry to {}", path.display()))?;
     Ok(())
+}
+
+/// Fetches a remote JSON template registry, caches it locally, and returns the parsed registry.
+fn fetch_and_cache_remote(url: &str) -> Result<TemplateRegistry> {
+    // Use `ureq` to perform a simple GET request.
+    let response = ureq::get(url)
+        .call()
+        .with_context(|| format!("Failed to fetch remote template registry from {}", url))?;
+    if response.status() != 200 {
+        anyhow::bail!(
+            "Unexpected HTTP status {} when fetching remote registry",
+            response.status()
+        );
+    }
+    let json_str = response
+        .into_string()
+        .with_context(|| "Failed to read response body as string")?;
+    // Parse the JSON into our TemplateRegistry struct.
+    let registry: TemplateRegistry = serde_json::from_str(&json_str)
+        .with_context(|| "Failed to deserialize remote template registry JSON")?;
+    // Cache the fetched registry locally for offline use.
+    let cache_path = registry_path()?;
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create cache directory {}", parent.display()))?;
+    }
+    fs::write(&cache_path, &json_str).with_context(|| {
+        format!(
+            "Failed to write cached registry to {}",
+            cache_path.display()
+        )
+    })?;
+    Ok(registry)
 }
 
 pub fn search_templates(query: &str, tags: Option<&[String]>) -> Result<Vec<TemplateEntry>> {
@@ -183,7 +262,10 @@ pub fn get_template(name: &str) -> Result<TemplateEntry> {
         .ok_or_else(|| anyhow::anyhow!("Template '{}' not found in registry", name))
 }
 
-pub fn get_template_by_name_and_version(name: &str, version: Option<&str>) -> Result<TemplateEntry> {
+pub fn get_template_by_name_and_version(
+    name: &str,
+    version: Option<&str>,
+) -> Result<TemplateEntry> {
     let registry = load_registry()?;
     let mut matching: Vec<_> = registry
         .templates
@@ -196,15 +278,13 @@ pub fn get_template_by_name_and_version(name: &str, version: Option<&str>) -> Re
     }
 
     if let Some(v) = version {
-        matching.sort_by(|a, b| {
-            semver_cmp(&b.version, &a.version)
-        });
-        matching.into_iter().find(|t| t.version == v)
+        matching.sort_by(|a, b| semver_cmp(&b.version, &a.version));
+        matching
+            .into_iter()
+            .find(|t| t.version == v)
             .ok_or_else(|| anyhow::anyhow!("Template '{}@{}' not found", name, v))
     } else {
-        matching.sort_by(|a, b| {
-            semver_cmp(&b.version, &a.version)
-        });
+        matching.sort_by(|a, b| semver_cmp(&b.version, &a.version));
         Ok(matching.into_iter().next().unwrap())
     }
 }
@@ -240,7 +320,10 @@ pub fn template_source_content(name: &str) -> Result<Option<String>> {
                                 .join("lib.rs");
                             if path.exists() {
                                 Some(fs::read_to_string(&path).with_context(|| {
-                                    format!("Failed to read built-in template at {}", path.display())
+                                    format!(
+                                        "Failed to read built-in template at {}",
+                                        path.display()
+                                    )
                                 })?)
                             } else {
                                 None
@@ -254,7 +337,10 @@ pub fn template_source_content(name: &str) -> Result<Option<String>> {
                             let lib_rs = Path::new(path_val).join("src").join("lib.rs");
                             if lib_rs.exists() {
                                 Some(fs::read_to_string(&lib_rs).with_context(|| {
-                                    format!("Failed to read template source at {}", lib_rs.display())
+                                    format!(
+                                        "Failed to read template source at {}",
+                                        lib_rs.display()
+                                    )
                                 })?)
                             } else {
                                 None
@@ -278,7 +364,11 @@ pub fn template_source_content(name: &str) -> Result<Option<String>> {
 pub fn add_template(entry: TemplateEntry) -> Result<()> {
     let mut registry = load_registry()?;
 
-    if let Some(existing) = registry.templates.iter_mut().find(|t| t.name == entry.name && t.version == entry.version) {
+    if let Some(existing) = registry
+        .templates
+        .iter_mut()
+        .find(|t| t.name == entry.name && t.version == entry.version)
+    {
         *existing = entry;
     } else {
         registry.templates.push(entry);
@@ -318,7 +408,10 @@ pub fn update_template(name: &str) -> Result<()> {
                             fetch_git_template(url, branch, &dest)?;
                         }
                     }
-                    _ => anyhow::bail!("Template source type '{}' does not support updates", type_val),
+                    _ => anyhow::bail!(
+                        "Template source type '{}' does not support updates",
+                        type_val
+                    ),
                 }
             }
         }
@@ -335,13 +428,17 @@ pub fn fetch_template(entry: &TemplateEntry, dest: &Path) -> Result<()> {
             if let Some(type_val) = obj.get("type").and_then(|v| v.as_str()) {
                 match type_val {
                     "git" => {
-                        let url = obj.get("url").and_then(|v| v.as_str())
+                        let url = obj
+                            .get("url")
+                            .and_then(|v| v.as_str())
                             .ok_or_else(|| anyhow::anyhow!("Git URL not found"))?;
                         let branch = obj.get("branch").and_then(|v| v.as_str());
                         fetch_git_template(url, branch, dest)
                     }
                     "local" => {
-                        let path = obj.get("path").and_then(|v| v.as_str())
+                        let path = obj
+                            .get("path")
+                            .and_then(|v| v.as_str())
                             .ok_or_else(|| anyhow::anyhow!("Local path not found"))?;
                         fetch_local_template(Path::new(path), dest)
                     }

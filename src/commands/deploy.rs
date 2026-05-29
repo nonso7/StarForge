@@ -1,4 +1,4 @@
-use crate::utils::{config, horizon, optimizer, print as p};
+use crate::utils::{config, horizon, optimizer, print as p, info, soroban};
 use anyhow::Result;
 use clap::Args;
 use colored::*;
@@ -29,6 +29,9 @@ pub struct DeployArgs {
     /// Execute deployment immediately if Stellar CLI is installed
     #[arg(long, default_value = "false")]
     pub execute: bool,
+    /// Simulate the deploy transaction using Soroban RPC
+    #[arg(long, default_value = "false")]
+    pub simulate: bool,
 }
 
 fn is_wasm_above_size_limit(wasm_size_kb: f64) -> bool {
@@ -117,6 +120,7 @@ pub fn handle(args: DeployArgs) -> Result<()> {
     }
 
     let cfg = config::load()?;
+    let wasm_hash = compute_local_wasm_hash(&wasm_bytes);
     let wallet = if let Some(ref wallet_name) = args.wallet {
         cfg.wallets
             .iter()
@@ -206,8 +210,6 @@ pub fn handle(args: DeployArgs) -> Result<()> {
 
     pb.inc(1);
     pb.set_message("Calculating WASM SHA-256 hash...");
-
-    let wasm_hash = compute_local_wasm_hash(&wasm_bytes);
 
     pb.inc(1);
     pb.set_message("Generating stellar CLI command...");

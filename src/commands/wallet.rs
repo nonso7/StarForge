@@ -101,8 +101,12 @@ pub enum WalletCommands {
     },
     /// Export a wallet to a JSON backup file
     Export {
-        /// Wallet name to export
-        name: String,
+        /// Optional wallet name to export (omit with --all)
+        #[arg(long, conflicts_with = "all")]
+        name: Option<String>,
+        /// Export all wallets
+        #[arg(long, short, conflicts_with = "name")]
+        all: bool,
         /// Output file path for the backup JSON
         #[arg(long)]
         output: PathBuf,
@@ -227,7 +231,7 @@ pub fn handle(cmd: WalletCommands) -> Result<()> {
             network,
             encrypt,
         } => rotate_wallet(name, fund, network, encrypt),
-        WalletCommands::Export { name, output } => export_wallet(name, output),
+        WalletCommands::Export { name, all, output } => export_wallet(name, all, output),
         WalletCommands::Import { file } => import_wallets(file),
         WalletCommands::Connect { device } => connect_hardware(device),
         WalletCommands::HwAddress { device, path } => hw_address(device, &path),
@@ -415,6 +419,7 @@ fn create(
         network: network.clone(),
         created_at: Utc::now().to_rfc3339(),
         funded: false,
+        rotation_history: Vec::new(),
     };
     cfg.wallets.push(wallet);
 
@@ -686,7 +691,7 @@ fn rotate_wallet(
             p::warn("Friendbot is not available on Mainnet. Skipping fund step.");
         } else {
             p::step(3, steps, "Funding the replacement wallet via Friendbot...");
-            match horizon::fund_account(&public_key) {
+            match horizon::fund_account(&public_key, &network) {
                 Ok(_) => {
                     if let Some(wallet) = cfg.wallets.iter_mut().find(|wallet| wallet.name == name)
                     {
@@ -713,19 +718,21 @@ fn rotate_wallet(
     Ok(())
 }
 
-fn export_wallet(name: String, output: PathBuf) -> Result<()> {
-    config::validate_wallet_name(&name)?;
+fn export_wallet(name_opt: Option<String>, all: bool, output: PathBuf) -> Result<()> {
     let cfg = config::load()?;
-    let wallet = cfg
-        .wallets
-        .iter()
-        .find(|w| w.name == name)
-        .ok_or_else(|| anyhow::anyhow!("Wallet '{}' not found", name))?;
+    let wallets_to_export: Vec<WalletBackupEntry> = if all {
+        cfg.wallets.iter().map(|w| WalletBackupEntry::from(w)).collect()
+    } else {
+        let name = name_opt.as_ref().ok_or_else(|| anyhow::anyhow!("Wallet name must be provided unless --all is used"))?;
+        config::validate_wallet_name(name)?;
+        let wallet = cfg.wallets.iter().find(|w| &w.name == name)
+            .ok_or_else(|| anyhow::anyhow!("Wallet '{}' not found", name))?;
+        vec![WalletBackupEntry::from(wallet)]
+    };
 
     if output.exists() && output.is_dir() {
         anyhow::bail!("Output path is a directory: {}", output.display());
     }
-
     if let Some(parent) = output.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent)
@@ -736,15 +743,18 @@ fn export_wallet(name: String, output: PathBuf) -> Result<()> {
     let backup = WalletBackup {
         version: WALLET_BACKUP_VERSION.to_string(),
         exported_at: Utc::now().to_rfc3339(),
-        wallets: vec![WalletBackupEntry::from(wallet)],
+        wallets: wallets_to_export,
     };
 
-    let contents = serde_json::to_string_pretty(&backup)
+    let json = serde_json::to_string_pretty(&backup)
         .with_context(|| "Failed to serialize wallet backup")?;
-    fs::write(&output, contents)
+    let passphrase = crypto::prompt_passphrase("Enter passphrase to encrypt backup", false)?;
+    let encrypted = crypto::encrypt_secret(&passphrase, &json)?;
+    fs::write(&output, encrypted)
         .with_context(|| format!("Failed to write {}", output.display()))?;
 
-    p::success(&format!("Wallet '{}' exported", name));
+    let name_display = if all { "all wallets".to_string() } else { name_opt.clone().unwrap() };
+    p::success(&format!("Wallet(s) {} exported", name_display));
     p::kv("Backup file", &output.display().to_string());
     p::info("Secrets are only stored in the backup file; they are not printed to stdout.");
     Ok(())
@@ -752,10 +762,17 @@ fn export_wallet(name: String, output: PathBuf) -> Result<()> {
 
 fn import_wallets(file: PathBuf) -> Result<()> {
     config::validate_file_path(&file, Some("json"))?;
-    let contents =
-        fs::read_to_string(&file).with_context(|| format!("Failed to read {}", file.display()))?;
-    let backup: WalletBackup =
-        serde_json::from_str(&contents).with_context(|| "Invalid backup JSON format")?;
+    let raw_contents = fs::read_to_string(&file)
+        .with_context(|| format!("Failed to read {}", file.display()))?;
+    // Detect encrypted format (salt:nonce:ciphertext)
+    let contents = if raw_contents.matches(':').count() == 2 {
+        let passphrase = crypto::prompt_passphrase("Enter passphrase to decrypt backup", false)?;
+        crypto::decrypt_secret(&passphrase, &raw_contents)?
+    } else {
+        raw_contents
+    };
+    let backup: WalletBackup = serde_json::from_str(&contents)
+        .with_context(|| "Invalid backup JSON format")?;
 
     if backup.version != WALLET_BACKUP_VERSION {
         anyhow::bail!(
