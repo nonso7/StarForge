@@ -4,7 +4,6 @@ use crate::plugins::registry::{self, TrustLevel, UninstallOptions};
 use crate::plugins::PluginManager;
 use crate::utils::print as p;
 use anyhow::{Context, Result};
-use chrono;
 use clap::Subcommand;
 use std::path::PathBuf;
 
@@ -316,9 +315,6 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
                 pl.name
             ));
             p::kv("  Path", &pl.path);
-            if let Some(ref ts) = pl.installed_at {
-                p::kv("  Installed at", ts);
-            }
             skipped += 1;
             println!();
             continue;
@@ -356,7 +352,13 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
 
             match status {
                 Ok(s) if s.success() => {
-                    registry::install_plugin(&pl.name, std::path::Path::new(&pl.path), &pl.source)?;
+                    registry::install_plugin(
+                        &pl.name,
+                        std::path::Path::new(&pl.path),
+                        &pl.source,
+                        &pl.starforge_version,
+                        &pl.plugin_version,
+                    )?;
                     p::success(&format!("  '{}' updated via cargo install", pl.name));
                     updated += 1;
                 }
@@ -388,12 +390,7 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
                         })
                         .unwrap_or(0);
 
-                    let installed_epoch = pl
-                        .installed_at
-                        .as_deref()
-                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                        .map(|dt| dt.timestamp() as u64)
-                        .unwrap_or(0);
+                    let installed_epoch = 0;
 
                     if modified > installed_epoch {
                         // Library on disk is newer — refresh the registry entry.
@@ -401,6 +398,8 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
                             &pl.name,
                             std::path::Path::new(&pl.path),
                             &pl.source,
+                            &pl.starforge_version,
+                            &pl.plugin_version,
                         )?;
                         p::success(&format!(
                             "  '{}' library on disk is newer — registry refreshed.",
