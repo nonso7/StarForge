@@ -6,7 +6,6 @@
 ![Language: Rust](https://img.shields.io/badge/Language-Rust-orange.svg)
 ![Network: Stellar](https://img.shields.io/badge/Network-Stellar-blue.svg)
 ![Status: Active](https://img.shields.io/badge/Status-Active-green.svg)
-![Stellar Wave](https://img.shields.io/badge/Stellar-Wave%20Program-blueviolet.svg)
 
 ---
 
@@ -16,7 +15,7 @@
 
 Think of it as the "Hardhat or Foundry" experience for the Stellar ecosystem, built in Rust for speed and reliability.
 
-This project is actively maintained and participates in the [Stellar Wave Program](https://www.drips.network/wave/stellar) on Drips â€” a monthly open-source contribution sprint where contributors earn rewards for merged pull requests.
+This project is actively maintained and open to community contributions.
 
 ---
 
@@ -443,12 +442,6 @@ We welcome contributions from developers of all experience levels!
    ```
 6. Push and open a Pull Request with a clear description
 
-### Rewards
-
-This project participates in the **[Stellar Wave Program](https://www.drips.network/wave/stellar)** on Drips. Contributors who resolve issues during an active Wave earn Points that translate to real USDC rewards.
-
-**Read the [Terms & Rules](https://docs.drips.network/wave/terms-and-rules) before contributing.**
-
 ---
 ## License
 
@@ -459,5 +452,4 @@ MIT Â© 2025 â€” See [LICENSE](./LICENSE) for details.
 ## Acknowledgements
 
 Built for the Stellar ecosystem.
-Participates in the [Stellar Wave Program](https://www.drips.network/wave/stellar) via [Drips](https://www.drips.network).
 Powered by the [Stellar Horizon API](https://developers.stellar.org/api/horizon) and [Soroban](https://soroban.stellar.org).
