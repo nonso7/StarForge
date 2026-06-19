@@ -8,8 +8,8 @@
 )]
 
 mod commands;
-mod plugins;
-mod utils;
+pub use starforge::plugins;
+pub use starforge::utils;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use colored::*;

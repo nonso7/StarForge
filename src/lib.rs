@@ -1,2 +1,2 @@
 pub mod plugins;
-mod utils;
+pub mod utils;
