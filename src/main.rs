@@ -8,10 +8,10 @@
 )]
 
 mod commands;
-pub use starforge::plugins;
+mod plugins;
 mod utils;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use colored::*;
 
 #[derive(Parser)]
@@ -23,7 +23,11 @@ use colored::*;
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
+
+    /// Print installed plugin command names, one per line
+    #[arg(long = "list-plugin-commands", hide = true)]
+    list_plugin_commands: bool,
 
     /// Suppress the ASCII banner and decorative output
     #[arg(long, short = 'q', global = true)]
@@ -73,8 +77,7 @@ enum Commands {
     #[command(subcommand)]
     Node(commands::node::NodeCommands),
     /// Generate shell completions for bash, zsh, and fish
-    #[command(subcommand)]
-    Completions(commands::completions::CompletionShell),
+    Completions(commands::completions::CompletionArgs),
 
     /// Interactive REPL for local Soroban contract testing
     Shell(commands::shell::ShellArgs),
@@ -121,6 +124,18 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
 
+    if cli.list_plugin_commands {
+        print_registered_plugin_commands();
+        return;
+    }
+
+    let Some(command) = cli.command else {
+        let mut cmd = Cli::command();
+        let _ = cmd.print_help();
+        println!();
+        return;
+    };
+
     // Initialise structured logging before anything else runs.
     let log_cfg =
         utils::logging::config_from_env(Some(cli.log_format.as_str()), cli.log_dir.clone());
@@ -132,7 +147,7 @@ fn main() {
         print_banner();
     }
 
-    let command_name = match &cli.command {
+    let command_name = match &command {
         Commands::Wallet(_) => "wallet",
         Commands::New(_) => "new",
         Commands::Contract(_) => "contract",
@@ -161,7 +176,7 @@ fn main() {
     .to_string();
 
     let start = std::time::Instant::now();
-    let result = match cli.command {
+    let result = match command {
         Commands::Wallet(cmd) => commands::wallet::handle(cmd),
         Commands::New(cmd) => commands::new::handle(cmd),
         Commands::Contract(cmd) => commands::contract::handle(cmd),
@@ -173,7 +188,7 @@ fn main() {
         Commands::Tx(args) => commands::tx::handle(args),
         Commands::Network(cmd) => commands::network::handle(cmd),
         Commands::Node(cmd) => commands::node::handle(cmd),
-        Commands::Completions(shell) => commands::completions::handle(shell),
+        Commands::Completions(args) => commands::completions::handle(args),
         Commands::Shell(args) => commands::shell::handle(args),
         Commands::Monitor(args) => commands::monitor::handle(args),
         Commands::Tutorial(cmd) => commands::tutorial::handle(cmd),
@@ -200,6 +215,12 @@ fn main() {
     if let Err(e) = result {
         eprintln!("\n  {} {}\n", "✗ Error:".red().bold(), e);
         std::process::exit(1);
+    }
+}
+
+fn print_registered_plugin_commands() {
+    for name in plugins::registry::load_registered_command_names() {
+        println!("{}", name);
     }
 }
 

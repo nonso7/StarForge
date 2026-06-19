@@ -330,6 +330,24 @@ pub fn load_all_registered_commands() -> Vec<RegisteredCommand> {
         .collect()
 }
 
+/// Return installed plugin command names in deterministic, machine-readable order.
+pub fn load_registered_command_names() -> Vec<String> {
+    let mut names: Vec<String> = load_all_registered_commands()
+        .into_iter()
+        .filter_map(|cmd| {
+            let name = cmd.name.trim();
+            if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            }
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// Remove a plugin from the registry and optionally delete its library file.
 pub fn uninstall_plugin(name: &str, opts: &UninstallOptions) -> Result<UninstallReport> {
     let mut reg = load_registry().unwrap_or_default();
