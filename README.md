@@ -161,7 +161,28 @@ starforge config get network
 # Set a configuration value
 starforge config set telemetry false
 starforge config set network mainnet
+
+# Migrate an older config file to the latest schema version
+starforge config migrate --dry-run   # preview the changes without writing
+starforge config migrate             # apply migrations (backs up config.toml.bak first)
 ```
+
+#### Config schema migrations
+
+StarForge versions its config file (`~/.starforge/config.toml`) with a `version`
+field. When the CLI is upgraded and the config schema changes, the file is read
+into a schema-agnostic value, its version is detected, and a sequence of
+migrations (`v1 → v2 → …`) reshapes it **before** it is deserialized into the
+current `Config`. This prevents the most dangerous class of upgrade bug —
+silently dropping wallet entries when a field is renamed or restructured.
+
+- A backup (`config.toml.bak`) is written before any migration overwrites the
+  file, plus a timestamped copy for recoverability.
+- `starforge config migrate --dry-run` shows exactly what would change without
+  modifying anything.
+- Reads (`config show`, telemetry, etc.) migrate in memory only and never
+  rewrite the file; persistence happens on an explicit `config migrate` or the
+  next `save`.
 
 Common settings:
 - **telemetry**: Enable/disable anonymous usage telemetry (`true` or `false`)

@@ -882,3 +882,63 @@ fn print_audit_report(report: &AuditReport) {
     }
     println!();
 }
+
+fn discover_commands_from_library(path: &str) -> Result<Vec<RegisteredCommand>> {
+    let mut pm = PluginManager::new();
+    unsafe {
+        pm.load_plugin(path)
+            .with_context(|| format!("Failed to load plugin from {}", path))?;
+    }
+    Ok(pm
+        .list_commands()
+        .into_iter()
+        .map(|c| RegisteredCommand {
+            name: c.name,
+            description: c.description,
+        })
+        .collect())
+}
+
+fn commands(name: Option<String>) -> Result<()> {
+    p::header("Plugin Commands");
+
+    let reg = registry::load_registry().unwrap_or_default();
+    if reg.plugins.is_empty() {
+        p::info("No plugins installed. Use: starforge plugin install <name> --path <lib>");
+        return Ok(());
+    }
+
+    let plugins: Vec<_> = match &name {
+        Some(n) => {
+            let found: Vec<_> = reg.plugins.iter().filter(|p| &p.name == n).collect();
+            if found.is_empty() {
+                anyhow::bail!(
+                    "Plugin '{}' is not installed. Run `starforge plugin list`.",
+                    n
+                );
+            }
+            found
+        }
+        None => reg.plugins.iter().collect(),
+    };
+
+    let mut any = false;
+    for pl in &plugins {
+        if pl.commands.is_empty() {
+            continue;
+        }
+        any = true;
+        p::kv_accent("Plugin", &pl.name);
+        for cmd in &pl.commands {
+            println!("  starforge {}  — {}", cmd.name, cmd.description);
+        }
+        println!();
+    }
+
+    if !any {
+        p::info("No commands registered. Re-install plugins to discover their commands.");
+        p::info("  starforge plugin install <name> --path <lib>");
+    }
+
+    Ok(())
+}
