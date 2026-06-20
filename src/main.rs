@@ -110,6 +110,10 @@ enum Commands {
     #[command(subcommand)]
     Upgrade(commands::upgrade::UpgradeCommands),
 
+    /// SEP-10 Web Authentication and SEP-24 Hosted Deposits
+    #[command(subcommand)]
+    Sep(commands::sep::SepCommands),
+
     /// Static analysis and linting for Soroban contracts
     Lint(commands::lint::LintArgs),
 
@@ -169,6 +173,7 @@ fn main() {
         Commands::Plugin(_) => "plugin",
         Commands::Template(_) => "template",
         Commands::Upgrade(_) => "upgrade",
+        Commands::Sep(_) => "sep",
         Commands::Lint(_) => "lint",
         Commands::Diagnostics(_) => "diagnostics",
         Commands::External(_) => "external",
@@ -198,6 +203,7 @@ fn main() {
         Commands::Plugin(args) => commands::plugin::handle(args),
         Commands::Template(args) => commands::template::handle(args),
         Commands::Upgrade(cmd) => commands::upgrade::handle(cmd),
+        Commands::Sep(cmd) => commands::sep::handle(cmd),
         Commands::Lint(args) => commands::lint::handle(args),
         Commands::Diagnostics(args) => commands::diagnostics::handle(args),
         Commands::External(args) => handle_external_plugin(args),
