@@ -16,6 +16,14 @@ pub struct TestArgs {
     /// Output report format (e.g. html, json)
     #[arg(long)]
     pub report: Option<String>,
+
+    /// Regenerate all stored snapshots instead of comparing against them
+    #[arg(long)]
+    pub update_snapshots: bool,
+
+    /// Fuzz the named contract function with random ScVal inputs
+    #[arg(long, value_name = "FUNCTION_NAME")]
+    pub fuzz: Option<String>,
 }
 
 pub fn handle(args: TestArgs) -> Result<()> {
@@ -27,12 +35,20 @@ pub fn handle(args: TestArgs) -> Result<()> {
     if let Some(r) = &args.report {
         p::kv("Report", r);
     }
+    if args.update_snapshots {
+        p::kv("Snapshots", "update mode");
+    }
+    if let Some(fn_name) = &args.fuzz {
+        p::kv("Fuzz target", fn_name);
+    }
 
     let result = test_runner::run_contract_tests(
         &args.wasm,
         test_runner::TestOptions {
             coverage: args.coverage,
             report_format: args.report.clone(),
+            update_snapshots: args.update_snapshots,
+            fuzz_function: args.fuzz.clone(),
         },
     )?;
 
@@ -42,6 +58,10 @@ pub fn handle(args: TestArgs) -> Result<()> {
     p::kv("Wasm bytes", &result.size_bytes.to_string());
     p::kv("Cases executed", &result.cases_executed.to_string());
     p::kv("Failures", &result.failures.to_string());
+    p::kv(
+        "Snapshot",
+        &format!("{:?}", result.snapshot_status).to_lowercase(),
+    );
     if let Some(path) = &result.report_path {
         p::kv("Report path", &path.display().to_string());
     }
