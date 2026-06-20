@@ -16,6 +16,7 @@ pub mod profiler;
 pub mod repl;
 pub mod sandbox;
 pub mod soroban;
+pub mod stellar_toml;
 pub mod stream;
 pub mod telemetry;
 pub mod template;
