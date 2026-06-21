@@ -48,6 +48,7 @@ hmac = "0.12"
 rustyline = "14.0.0"
 zip = "0.6"
 tempfile = "3.8"
+zeroize = { version = "1.9.0", features = ["derive"] }
 
 [features]
 hardware-wallet = ["dep:hidapi", "dep:trezor-client"]
