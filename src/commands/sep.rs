@@ -1,5 +1,6 @@
 use crate::utils::{config, crypto, print as p, stellar_toml};
 use anyhow::{Context, Result};
+use base64::Engine;
 use clap::Subcommand;
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
@@ -226,9 +227,11 @@ fn sep10_auth(anchor: &str, wallet_name: &str) -> Result<()> {
         .try_into()
         .map_err(|_| anyhow::anyhow!("Signature count exceeds envelope limit"))?;
 
-    let signed_xdr = envelope
-        .to_xdr_base64(Limits::none())
-        .context("Failed to base64-encode signed transaction")?;
+    let xdr_bytes = envelope
+        .to_xdr(Limits::none())
+        .context("Failed to XDR-encode signed transaction")?;
+    let signed_xdr =
+        base64::engine::general_purpose::STANDARD.encode(&xdr_bytes);
 
     // Step 4: POST signed transaction to get JWT
     p::step(4, 5, "Submitting signed challenge...");
