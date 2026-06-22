@@ -2545,6 +2545,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "similar",
  "stellar-strkey",
  "stellar-xdr",
  "tempfile",

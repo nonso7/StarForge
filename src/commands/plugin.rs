@@ -134,21 +134,21 @@ fn install(name: String, path: Option<PathBuf>, source: Option<String>, force: b
 
     let plugin_manifest = manifest::require_compatible_manifest(&lib_path, &name)?;
 
-    // Load the plugin to discover the commands it registers.
-    let discovered_commands: Vec<RegisteredCommand> = {
-        let mut pm = PluginManager::new();
-        unsafe {
-            pm.load_plugin(&lib_path).with_context(|| {
-                format!("Failed to load plugin '{}' to discover commands", name)
-            })?;
+    // Command discovery is best-effort: install records the manifest/path, while
+    // audit/load report runtime library failures with richer diagnostics.
+    let discovered_commands: Vec<RegisteredCommand> = match discover_commands_from_library(
+        lib_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Plugin path is not valid UTF-8"))?,
+    ) {
+        Ok(commands) => commands,
+        Err(error) => {
+            p::warn(&format!(
+                "Plugin registered without command discovery: {}",
+                error
+            ));
+            Vec::new()
         }
-        pm.list_commands()
-            .into_iter()
-            .map(|c| RegisteredCommand {
-                name: c.name,
-                description: c.description,
-            })
-            .collect()
     };
 
     registry::install_plugin(
@@ -280,56 +280,6 @@ fn load() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn commands(name: Option<String>) -> Result<()> {
-    p::header("Plugin Commands");
-    let reg = registry::load_registry().unwrap_or_default();
-    let plugins: Vec<_> = reg
-        .plugins
-        .iter()
-        .filter(|p| name.as_ref().map(|n| &p.name == n).unwrap_or(true))
-        .collect();
-
-    if plugins.is_empty() {
-        if let Some(name) = name {
-            anyhow::bail!(
-                "Plugin '{}' is not installed. Run `starforge plugin list` to see installed plugins.",
-                name
-            );
-        }
-        p::info("No plugins installed. Use: starforge plugin install <name> --path <lib>");
-        return Ok(());
-    }
-
-    for plugin in plugins {
-        p::kv_accent("Plugin", &plugin.name);
-        if plugin.commands.is_empty() {
-            p::info("  No commands registered.");
-        } else {
-            for command in &plugin.commands {
-                p::info(&format!("  • {} — {}", command.name, command.description));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn discover_commands_from_library(path: &str) -> Result<Vec<RegisteredCommand>> {
-    let mut pm = PluginManager::new();
-    unsafe {
-        pm.load_plugin(path)
-            .with_context(|| format!("Failed to load plugin library at {}", path))?;
-    }
-    Ok(pm
-        .list_commands()
-        .into_iter()
-        .map(|cmd| RegisteredCommand {
-            name: cmd.name,
-            description: cmd.description,
-        })
-        .collect())
 }
 
 fn uninstall(name: String, purge: bool, yes: bool) -> Result<()> {

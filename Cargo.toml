@@ -44,6 +44,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 tracing-appender = "0.2"
 bip39 = { version = "2", features = ["rand", "std"] }
+wasmparser = "0.116.0"
+wasmprinter = "0.3"
+wat = "1.0"
 hmac = "0.12"
 rustyline = "14.0.0"
 zip = "0.6"

@@ -1,6 +1,123 @@
+#![allow(clippy::result_large_err)]
+
 use crate::utils::config;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
+use std::sync::OnceLock;
+use std::time::Duration;
+
+const HORIZON_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const HORIZON_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const HORIZON_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+];
+
+static HORIZON_AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+
+fn horizon_agent() -> &'static ureq::Agent {
+    HORIZON_AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(HORIZON_CONNECT_TIMEOUT)
+            .timeout(HORIZON_REQUEST_TIMEOUT)
+            .build()
+    })
+}
+
+fn is_transient_horizon_error(error: &ureq::Error) -> bool {
+    match error {
+        ureq::Error::Status(status, _) => matches!(*status, 429 | 502 | 503 | 504),
+        ureq::Error::Transport(_) => true,
+    }
+}
+
+fn request_with_retries<F>(
+    mut request: F,
+    retry_delays: &[Duration],
+) -> std::result::Result<ureq::Response, ureq::Error>
+where
+    F: FnMut() -> std::result::Result<ureq::Response, ureq::Error>,
+{
+    for attempt in 0..=retry_delays.len() {
+        match request() {
+            Ok(response) => return Ok(response),
+            Err(error) if attempt < retry_delays.len() && is_transient_horizon_error(&error) => {
+                std::thread::sleep(retry_delays[attempt]);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("retry loop returns on success or final error");
+}
+
+fn horizon_request<F>(request: F) -> std::result::Result<ureq::Response, ureq::Error>
+where
+    F: FnMut() -> std::result::Result<ureq::Response, ureq::Error>,
+{
+    request_with_retries(request, &HORIZON_RETRY_DELAYS)
+}
+
+fn horizon_request_error(error: ureq::Error, context: &str) -> anyhow::Error {
+    match error {
+        ureq::Error::Status(status, response) => {
+            let detail = response
+                .into_string()
+                .ok()
+                .and_then(|body| format_horizon_error_body(&body))
+                .unwrap_or_else(|| "No response body".to_string());
+            anyhow!("{context}: HTTP {status}: {detail}")
+        }
+        ureq::Error::Transport(error) => anyhow!("{context}: {error}"),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HorizonClient {
+    base_url: String,
+}
+
+impl HorizonClient {
+    pub fn for_network(network: &str) -> Result<Self> {
+        Ok(Self::new(horizon_url(network)?))
+    }
+
+    pub fn new(base_url: impl Into<String>) -> Self {
+        Self {
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+        }
+    }
+
+    fn url(&self, path: &str) -> String {
+        if path.starts_with("http://") || path.starts_with("https://") {
+            path.to_string()
+        } else if path.starts_with('/') {
+            format!("{}{}", self.base_url, path)
+        } else {
+            format!("{}/{}", self.base_url, path)
+        }
+    }
+
+    fn get_raw(&self, path: &str) -> std::result::Result<ureq::Response, ureq::Error> {
+        let url = self.url(path);
+        horizon_request(|| horizon_agent().get(&url).call())
+    }
+
+    fn post_form_raw(
+        &self,
+        path: &str,
+        form_data: &str,
+    ) -> std::result::Result<ureq::Response, ureq::Error> {
+        let url = self.url(path);
+        horizon_request(|| {
+            horizon_agent()
+                .post(&url)
+                .set("Content-Type", "application/x-www-form-urlencoded")
+                .send_string(form_data)
+        })
+    }
+}
 
 pub fn network_config(network: &str) -> Result<config::NetworkConfig> {
     let cfg = config::load()?;
@@ -37,13 +154,16 @@ pub fn fund_account(public_key: &str, network: &str) -> Result<()> {
         friendbot_url(network)?.unwrap_or_else(|| "https://friendbot.stellar.org".to_string());
     let separator = if friendbot.contains('?') { '&' } else { '?' };
     let url = format!("{}{}addr={}", friendbot, separator, public_key);
-    let res = match ureq::get(&url).call() {
+    let res = match horizon_request(|| horizon_agent().get(&url).call()) {
         Ok(res) => res,
         Err(ureq::Error::Status(status, _)) => {
             anyhow::bail!("Friendbot returned status {}", status)
         }
         Err(error) => {
-            return Err(error).with_context(|| format!("Friendbot request failed for {}", network))
+            return Err(horizon_request_error(
+                error,
+                &format!("Friendbot request failed for {}", network),
+            ))
         }
     };
     if res.status() == 200 {
@@ -54,11 +174,17 @@ pub fn fund_account(public_key: &str, network: &str) -> Result<()> {
 }
 
 pub fn fetch_account(public_key: &str, network: &str) -> Result<AccountResponse> {
-    let horizon = horizon_url(network)?;
-    let url = format!("{}/accounts/{}", horizon, public_key);
-    let res = ureq::get(&url)
-        .call()
-        .with_context(|| format!("Failed to reach Horizon on {}", network))?;
+    let client = HorizonClient::for_network(network)?;
+    let res = match client.get_raw(&format!("/accounts/{public_key}")) {
+        Ok(res) => res,
+        Err(ureq::Error::Status(404, _)) => anyhow::bail!("Account not found on {}", network),
+        Err(error) => {
+            return Err(horizon_request_error(
+                error,
+                &format!("Failed to reach Horizon on {}", network),
+            ))
+        }
+    };
     if res.status() == 200 {
         let account: AccountResponse = res
             .into_json()
@@ -70,10 +196,9 @@ pub fn fetch_account(public_key: &str, network: &str) -> Result<AccountResponse>
 }
 
 pub fn check_network(network: &str) -> bool {
-    if let Ok(horizon) = horizon_url(network) {
-        let url = format!("{}/", horizon);
-        ureq::get(&url)
-            .call()
+    if let Ok(client) = HorizonClient::for_network(network) {
+        client
+            .get_raw("/")
             .map(|r| r.status() == 200)
             .unwrap_or(false)
     } else {
@@ -131,11 +256,13 @@ pub struct FeeStats {
 }
 
 pub fn fetch_fee_stats(network: &str) -> Result<FeeStats> {
-    let horizon = horizon_url(network)?;
-    let url = format!("{}/fee_stats", horizon);
-    let res = ureq::get(&url)
-        .call()
-        .with_context(|| format!("Failed to fetch fee stats from {}", network))?;
+    let client = HorizonClient::for_network(network)?;
+    let res = client.get_raw("/fee_stats").map_err(|error| {
+        horizon_request_error(
+            error,
+            &format!("Failed to fetch fee stats from {}", network),
+        )
+    })?;
     if res.status() == 200 {
         let stats: FeeStats = res
             .into_json()
@@ -193,17 +320,24 @@ pub fn fetch_transactions_filtered(
     network: &str,
     filter: TxFilter,
 ) -> Result<Vec<TransactionRecord>> {
+    let client = HorizonClient::for_network(network)?;
     let url = build_transaction_query_url(public_key, network, &filter)?;
-    let res = ureq::get(&url).call().with_context(|| {
+    let res = client.get_raw(&url).map_err(|error| {
+        horizon_request_error(
+            error,
+            &format!(
+                "Account '{}' not found on {}. Has it been funded?",
+                public_key, network
+            ),
+        )
+    })?;
+
+    let parsed: TransactionsResponse = res.into_json().with_context(|| {
         format!(
             "Account '{}' not found on {}. Has it been funded?",
             public_key, network
         )
     })?;
-
-    let parsed: TransactionsResponse = res
-        .into_json()
-        .with_context(|| "Failed to parse transactions response")?;
 
     let mut records = parsed.embedded.records;
 
@@ -240,6 +374,44 @@ pub struct TransactionSubmitResult {
 struct HorizonError {
     pub title: String,
     pub detail: Option<String>,
+    pub extras: Option<HorizonErrorExtras>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HorizonErrorExtras {
+    pub result_codes: Option<HorizonResultCodes>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HorizonResultCodes {
+    pub transaction: Option<String>,
+    pub operations: Option<Vec<String>>,
+}
+
+fn format_horizon_error_body(body: &str) -> Option<String> {
+    let horizon_error = serde_json::from_str::<HorizonError>(body).ok()?;
+    let mut parts = vec![horizon_error.title];
+
+    if let Some(detail) = horizon_error.detail.filter(|detail| !detail.is_empty()) {
+        parts.push(detail);
+    }
+
+    if let Some(result_codes) = horizon_error.extras.and_then(|extras| extras.result_codes) {
+        let mut codes = Vec::new();
+        if let Some(transaction) = result_codes.transaction {
+            codes.push(format!("transaction={transaction}"));
+        }
+        if let Some(operations) = result_codes.operations {
+            if !operations.is_empty() {
+                codes.push(format!("operations={}", operations.join(",")));
+            }
+        }
+        if !codes.is_empty() {
+            parts.push(format!("result_codes: {}", codes.join("; ")));
+        }
+    }
+
+    Some(parts.join(" - "))
 }
 
 #[derive(Debug, Clone)]
@@ -327,14 +499,18 @@ pub fn submit_payment_transaction(
     let signed_xdr = sign_transaction_xdr(transaction_xdr, secret_key, network)?;
 
     // Submit to Horizon
-    let horizon = horizon_url(network)?;
-    let url = format!("{}/transactions", horizon);
+    let client = HorizonClient::for_network(network)?;
     let form_data = format!("tx={}", urlencoding::encode(&signed_xdr));
 
-    let res = ureq::post(&url)
-        .set("Content-Type", "application/x-www-form-urlencoded")
-        .send_string(&form_data)
-        .with_context(|| "Failed to submit transaction to Horizon")?;
+    let res = match client.post_form_raw("/transactions", &form_data) {
+        Ok(res) => res,
+        Err(error) => {
+            return Err(horizon_request_error(
+                error,
+                "Failed to submit transaction to Horizon",
+            ))
+        }
+    };
 
     let status = res.status();
 
@@ -358,12 +534,8 @@ pub fn submit_payment_transaction(
             .into_string()
             .unwrap_or_else(|_| "Unknown error".to_string());
 
-        // Try to parse Horizon error format
-        if let Ok(horizon_error) = serde_json::from_str::<HorizonError>(&error_text) {
-            let detail = horizon_error
-                .detail
-                .unwrap_or_else(|| "No additional details".to_string());
-            anyhow::bail!("Transaction failed: {} - {}", horizon_error.title, detail);
+        if let Some(detail) = format_horizon_error_body(&error_text) {
+            anyhow::bail!("Transaction failed: {}", detail);
         } else {
             anyhow::bail!("Transaction failed with status {}: {}", status, error_text);
         }
@@ -375,14 +547,18 @@ pub fn submit_multisig_transaction(
     network: &str,
 ) -> Result<TransactionSubmitResult> {
     // Submit a pre-signed transaction (e.g. multisig envelope) to Horizon.
-    let horizon = horizon_url(network)?;
-    let url = format!("{}/transactions", horizon);
+    let client = HorizonClient::for_network(network)?;
     let form_data = format!("tx={}", urlencoding::encode(signed_transaction_xdr));
 
-    let res = ureq::post(&url)
-        .set("Content-Type", "application/x-www-form-urlencoded")
-        .send_string(&form_data)
-        .with_context(|| "Failed to submit transaction to Horizon")?;
+    let res = match client.post_form_raw("/transactions", &form_data) {
+        Ok(res) => res,
+        Err(error) => {
+            return Err(horizon_request_error(
+                error,
+                "Failed to submit transaction to Horizon",
+            ))
+        }
+    };
 
     let status = res.status();
     if status == 200 {
@@ -405,11 +581,8 @@ pub fn submit_multisig_transaction(
             .into_string()
             .unwrap_or_else(|_| "Unknown error".to_string());
 
-        if let Ok(horizon_error) = serde_json::from_str::<HorizonError>(&error_text) {
-            let detail = horizon_error
-                .detail
-                .unwrap_or_else(|| "No additional details".to_string());
-            anyhow::bail!("Transaction failed: {} - {}", horizon_error.title, detail);
+        if let Some(detail) = format_horizon_error_body(&error_text) {
+            anyhow::bail!("Transaction failed: {}", detail);
         } else {
             anyhow::bail!("Transaction failed with status {}: {}", status, error_text);
         }
@@ -533,15 +706,20 @@ mod tests {
     use crate::utils::config::{self, Config, NetworkConfig};
     use mockito::{Matcher, Server};
     use std::collections::HashMap;
+    use std::sync::{Mutex, MutexGuard};
     use tempfile::TempDir;
 
+    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+
     struct TestConfigGuard {
+        _env_lock: MutexGuard<'static, ()>,
         _temp_dir: TempDir,
         original_home: Option<String>,
     }
 
     impl TestConfigGuard {
         fn new(horizon_url: &str, friendbot_url: Option<String>) -> Self {
+            let env_lock = TEST_ENV_LOCK.lock().expect("test env lock");
             let temp_dir = tempfile::tempdir().expect("temp dir");
             let original_home = std::env::var("HOME").ok();
 
@@ -572,6 +750,7 @@ mod tests {
             .expect("save config");
 
             Self {
+                _env_lock: env_lock,
                 _temp_dir: temp_dir,
                 original_home,
             }
@@ -650,8 +829,41 @@ mod tests {
     }
 
     #[test]
-    fn build_transaction_query_url_includes_pagination_params() {
+    fn horizon_error_body_includes_result_codes() {
+        let detail = format_horizon_error_body(
+            r#"{
+                "title":"Transaction Failed",
+                "detail":"The transaction failed when submitted to Horizon.",
+                "extras":{
+                    "result_codes":{
+                        "transaction":"tx_failed",
+                        "operations":["op_no_trust","op_underfunded"]
+                    }
+                }
+            }"#,
+        )
+        .expect("formatted error");
+
+        assert!(detail.contains("Transaction Failed"));
+        assert!(detail.contains("tx_failed"));
+        assert!(detail.contains("op_no_trust"));
+        assert!(detail.contains("op_underfunded"));
+    }
+
+    #[test]
+    fn horizon_503_status_is_transient() {
         let mut server = Server::new();
+        let _mock = server.mock("GET", "/fee_stats").with_status(503).create();
+        let url = format!("{}/fee_stats", server.url());
+
+        let err = horizon_agent().get(&url).call().unwrap_err();
+
+        assert!(is_transient_horizon_error(&err));
+    }
+
+    #[test]
+    fn build_transaction_query_url_includes_pagination_params() {
+        let server = Server::new();
         let _guard = TestConfigGuard::new(&server.url(), None);
 
         let filter = TxFilter {
