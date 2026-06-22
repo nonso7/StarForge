@@ -5,7 +5,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use stellar_strkey::ed25519::PrivateKey as StellarPrivateKey;
 use stellar_xdr::curr::{
-    BytesM, DecoratedSignature, Limits, OperationBody, Preconditions, ReadXdr,
+    BytesM, DecoratedSignature, Limits, OperationBody, Preconditions,
     Signature as XdrSignature, SignatureHint, TransactionEnvelope, WriteXdr,
 };
 use std::collections::HashMap;
@@ -105,8 +105,10 @@ fn sep10_auth(anchor: &str, wallet_name: &str) -> Result<()> {
 
     // Step 3: Decode and verify the challenge transaction
     p::step(3, 5, "Verifying challenge transaction...");
-    let envelope = TransactionEnvelope::from_xdr_base64(challenge_xdr, Limits::none())
-        .context("Failed to decode challenge transaction XDR")?;
+    let xdr_bytes = base64::decode(challenge_xdr)
+        .context("Failed to decode base64 challenge transaction")?;
+    let envelope = TransactionEnvelope::from_xdr(&xdr_bytes, Limits::none())
+        .context("Failed to parse challenge transaction XDR")?;
 
     // Verify in immutable scope, produce the sig to add
     let (new_sig, existing_sigs) = {

@@ -73,8 +73,7 @@ enum Commands {
     #[command(subcommand)]
     Node(commands::node::NodeCommands),
     /// Generate shell completions for bash, zsh, and fish
-    #[command(subcommand)]
-    Completions(commands::completions::CompletionShell),
+    Completions(commands::completions::CompletionArgs),
 
     /// Interactive REPL for local Soroban contract testing
     Shell(commands::shell::ShellArgs),

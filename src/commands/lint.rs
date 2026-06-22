@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use wasmparser::{ImportSectionEntryType, Operator, Parser as WasmParser, Payload};
+use wasmparser::{Operator, Parser as WasmParser, Payload};
 
 #[derive(Parser)]
 pub struct LintArgs {
@@ -130,12 +130,11 @@ fn collect_imports(bytes: &[u8]) -> Result<ImportIndexMap> {
             Payload::ImportSection(section) => {
                 for import in section {
                     let import = import?;
-                    if let ImportSectionEntryType::Function(_) = import.ty {
-                        import_map.process_import(import.field.unwrap_or_default());
-                    }
+                    // Process all imports (functions are identified by their index in ImportIndexMap)
+                    import_map.process_import(import.name);
                 }
             }
-            Payload::End => break,
+            Payload::End(_) => break,
             _ => {}
         }
     }
@@ -199,7 +198,7 @@ fn analyze_ttl_expiry(bytes: &[u8], import_map: &ImportIndexMap, path: &Path) ->
                 }
                 func_index += 1;
             }
-            Payload::End => break,
+            Payload::End(_) => break,
             _ => {}
         }
     }
@@ -325,10 +324,14 @@ fn analyze_budget(bytes: &[u8], path: &Path) -> Result<(BudgetReport, Vec<LintFi
             Payload::CodeSectionEntry(body) => {
                 code_section_bytes += body.get_binary_reader().range().len();
             }
-            Payload::DataSectionEntry(data) => {
-                data_section_bytes += data.get_binary_reader().range().len();
+            Payload::DataSection(section) => {
+                for data in section {
+                    if let Ok(data) = data {
+                        data_section_bytes += data.value.len();
+                    }
+                }
             }
-            Payload::End => break,
+            Payload::End(_) => break,
             _ => {}
         }
     }

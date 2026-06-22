@@ -220,7 +220,7 @@ fn load() -> Result<()> {
         return Ok(());
     }
 
-    let config = crate::utils::config::load().unwrap_or_default();
+    let _config = crate::utils::config::load().unwrap_or_default();
 
     // Warn about any unknown-trust plugins before loading.
     for pl in reg.plugins.iter().filter(|p| {
@@ -353,7 +353,7 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
         return Ok(());
     }
 
-    let config = crate::utils::config::load().unwrap_or_default();
+    let _config = crate::utils::config::load().unwrap_or_default();
 
     let to_update: Vec<_> = match &name {
         Some(n) => {
@@ -555,7 +555,7 @@ fn verify(name: Option<String>, deep: bool, runtime_check: bool) -> Result<()> {
         None => reg.plugins.iter().collect(),
     };
 
-    let config = crate::utils::config::load().unwrap_or_default();
+    let _config = crate::utils::config::load().unwrap_or_default();
     let mut all_ok = true;
 
     for pl in &to_check {
