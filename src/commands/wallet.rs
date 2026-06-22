@@ -991,11 +991,11 @@ fn merge_wallet(
     .add("Destination", &destination)
     .add(
         "XLM to Transfer",
-        &format!("{:.7} XLM (minus fee)", xlm_balance),
+        format!("{:.7} XLM (minus fee)", xlm_balance),
     )
     .add(
         "Estimated Fee",
-        &format!("{:.7} XLM", tx_result.fee as f64 / 10_000_000.0),
+        format!("{:.7} XLM", tx_result.fee as f64 / 10_000_000.0),
     )
     .add("Remove Local", if remove_local { "Yes" } else { "No" });
 
