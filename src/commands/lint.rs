@@ -152,7 +152,7 @@ fn analyze_ttl_expiry(
 ) -> Result<Vec<LintFinding>> {
     let mut findings = Vec::new();
     let parser = WasmParser::new(0);
-    let mut func_index = import_map.import_count as usize + 1;
+    let mut func_index = import_map.import_count + 1;
 
     for payload in parser.parse_all(bytes) {
         match payload? {
@@ -175,6 +175,7 @@ fn analyze_ttl_expiry(
                         }
                         Operator::Loop { .. } => loop_depth += 1,
                         Operator::Block { .. } | Operator::If { .. } => loop_depth += 1,
+                        #[allow(clippy::collapsible_match)]
                         Operator::End => {
                             if loop_depth > 0 {
                                 loop_depth -= 1;
@@ -216,17 +217,17 @@ fn analyze_ttl_expiry(
 fn analyze_persistent_storage_misuse(wat: &str, path: &Path) -> Result<Vec<LintFinding>> {
     let mut findings = Vec::new();
     for (line_num, line) in wat.lines().enumerate() {
-        if line.contains("Temporary") || line.contains("temporary") {
-            if line.contains("storage") || line.contains("Storage") || line.contains("map") {
-                findings.push(LintFinding {
-                    file: path.display().to_string(),
-                    line: line_num + 1,
-                    check: "temporary-storage-misuse".to_string(),
-                    message: "Temporary contract storage is in use. Consider whether the data should be stored in Persistent storage to avoid eviction or TTL expiry.".to_string(),
-                    severity: "warning".to_string(),
-                    fix_available: false,
-                });
-            }
+        if (line.contains("Temporary") || line.contains("temporary"))
+            && (line.contains("storage") || line.contains("Storage") || line.contains("map"))
+        {
+            findings.push(LintFinding {
+                file: path.display().to_string(),
+                line: line_num + 1,
+                check: "temporary-storage-misuse".to_string(),
+                message: "Temporary contract storage is in use. Consider whether the data should be stored in Persistent storage to avoid eviction or TTL expiry.".to_string(),
+                severity: "warning".to_string(),
+                fix_available: false,
+            });
         }
     }
     Ok(findings)
@@ -333,10 +334,8 @@ fn analyze_budget(bytes: &[u8], path: &Path) -> Result<(BudgetReport, Vec<LintFi
                 code_section_bytes += body.get_binary_reader().range().len();
             }
             Payload::DataSection(section) => {
-                for data in section {
-                    if let Ok(data) = data {
-                        data_section_bytes += data.data.len();
-                    }
+                for data in section.into_iter().flatten() {
+                    data_section_bytes += data.data.len();
                 }
             }
             Payload::End(_) => break,

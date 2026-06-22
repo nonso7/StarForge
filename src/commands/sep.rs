@@ -230,8 +230,7 @@ fn sep10_auth(anchor: &str, wallet_name: &str) -> Result<()> {
     let xdr_bytes = envelope
         .to_xdr(Limits::none())
         .context("Failed to XDR-encode signed transaction")?;
-    let signed_xdr =
-        base64::engine::general_purpose::STANDARD.encode(&xdr_bytes);
+    let signed_xdr = base64::engine::general_purpose::STANDARD.encode(&xdr_bytes);
 
     // Step 4: POST signed transaction to get JWT
     p::step(4, 5, "Submitting signed challenge...");
