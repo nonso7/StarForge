@@ -1,5 +1,5 @@
-use std::process::{Command, Stdio};
 use dialoguer::Password;
+use std::process::{Command, Stdio};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Prompt for passphrase/secret key securely before any confirmation step.
@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. Clear and sanitize the subprocess environment when invoking an external workflow
     let mut child_cmd = Command::new("stellar");
-    
+
     child_cmd
         .arg("contract")
         .arg("deploy")
