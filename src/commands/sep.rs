@@ -3,14 +3,14 @@ use anyhow::{Context, Result};
 use clap::Subcommand;
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
-use stellar_strkey::ed25519::PrivateKey as StellarPrivateKey;
-use stellar_xdr::curr::{
-    BytesM, DecoratedSignature, Limits, OperationBody, Preconditions,
-    Signature as XdrSignature, SignatureHint, TransactionEnvelope, WriteXdr,
-};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use stellar_strkey::ed25519::PrivateKey as StellarPrivateKey;
+use stellar_xdr::curr::{
+    BytesM, DecoratedSignature, Limits, OperationBody, Preconditions, ReadXdr,
+    Signature as XdrSignature, SignatureHint, TransactionEnvelope, WriteXdr,
+};
 
 #[derive(Subcommand)]
 pub enum SepCommands {
@@ -105,7 +105,8 @@ fn sep10_auth(anchor: &str, wallet_name: &str) -> Result<()> {
 
     // Step 3: Decode and verify the challenge transaction
     p::step(3, 5, "Verifying challenge transaction...");
-    let xdr_bytes = base64::decode(challenge_xdr)
+    let xdr_bytes = base64::engine::general_purpose::STANDARD
+        .decode(challenge_xdr)
         .context("Failed to decode base64 challenge transaction")?;
     let envelope = TransactionEnvelope::from_xdr(&xdr_bytes, Limits::none())
         .context("Failed to parse challenge transaction XDR")?;
@@ -160,10 +161,9 @@ fn sep10_auth(anchor: &str, wallet_name: &str) -> Result<()> {
                 }
                 match &md.data_value {
                     Some(dv) if dv.0.len() == 64 => {}
-                    Some(dv) => anyhow::bail!(
-                        "Challenge nonce must be 64 bytes, got {}",
-                        dv.0.len()
-                    ),
+                    Some(dv) => {
+                        anyhow::bail!("Challenge nonce must be 64 bytes, got {}", dv.0.len())
+                    }
                     None => anyhow::bail!("Challenge manage_data operation has no data value"),
                 }
             }
@@ -182,9 +182,10 @@ fn sep10_auth(anchor: &str, wallet_name: &str) -> Result<()> {
         let hash: [u8; 32] = Sha256::digest(&payload).into();
 
         // Decrypt wallet secret key and sign
-        let sk_str = wallet.secret_key.as_ref().with_context(|| {
-            format!("Wallet '{}' has no secret key stored", wallet_name)
-        })?;
+        let sk_str = wallet
+            .secret_key
+            .as_ref()
+            .with_context(|| format!("Wallet '{}' has no secret key stored", wallet_name))?;
         let plain_sk = if sk_str.contains(':') {
             let pwd = crypto::prompt_password(
                 &format!("Enter password for wallet '{}'", wallet_name),
@@ -201,12 +202,7 @@ fn sep10_auth(anchor: &str, wallet_name: &str) -> Result<()> {
         let pub_bytes = signing_key.verifying_key().to_bytes();
         let dalek_sig = signing_key.sign(&hash);
 
-        let hint = SignatureHint([
-            pub_bytes[28],
-            pub_bytes[29],
-            pub_bytes[30],
-            pub_bytes[31],
-        ]);
+        let hint = SignatureHint([pub_bytes[28], pub_bytes[29], pub_bytes[30], pub_bytes[31]]);
         let xdr_sig = XdrSignature(
             BytesM::try_from(dalek_sig.to_bytes().to_vec())
                 .map_err(|_| anyhow::anyhow!("Failed to encode ed25519 signature as XDR bytes"))?,
@@ -271,7 +267,10 @@ fn sep24_deposit(anchor: &str, asset: &str, amount: f64, wallet_name: &str) -> R
         .with_context(|| format!("Wallet '{}' not found", wallet_name))?;
     let public_key = wallet.public_key.clone();
 
-    p::info(&format!("Deposit: {} {} via anchor '{}'", amount, asset, anchor));
+    p::info(&format!(
+        "Deposit: {} {} via anchor '{}'",
+        amount, asset, anchor
+    ));
     p::kv("Wallet", wallet_name);
     p::kv("Public Key", &public_key);
 
@@ -354,11 +353,7 @@ fn sep24_deposit(anchor: &str, asset: &str, amount: f64, wallet_name: &str) -> R
     p::info("Polling every 5 seconds (timeout: 2 minutes)...");
     println!();
 
-    poll_sep24_transaction(
-        transfer_server.trim_end_matches('/'),
-        tx_id,
-        &jwt,
-    )?;
+    poll_sep24_transaction(transfer_server.trim_end_matches('/'), tx_id, &jwt)?;
 
     Ok(())
 }
@@ -453,10 +448,7 @@ fn poll_sep24_transaction(transfer_server: &str, tx_id: &str, jwt: &str) -> Resu
                 anyhow::bail!("Deposit failed: {}", msg);
             }
             _ => {
-                p::info(&format!(
-                    "[{}/24] Status: {} — waiting...",
-                    attempt, status
-                ));
+                p::info(&format!("[{}/24] Status: {} — waiting...", attempt, status));
             }
         }
     }

@@ -224,8 +224,7 @@ fn load() -> Result<()> {
 
     // Warn about any unknown-trust plugins before loading.
     for pl in reg.plugins.iter().filter(|p| {
-        registry::classify_source(&p.source) == TrustLevel::Unknown
-            && !p.source.is_empty()
+        registry::classify_source(&p.source) == TrustLevel::Unknown && !p.source.is_empty()
     }) {
         p::warn(&format!(
             "Plugin '{}' is from an unknown/untrusted source: {}",

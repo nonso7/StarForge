@@ -469,11 +469,7 @@ pub fn fetch_template_cached(entry: &TemplateEntry, force_refresh: bool) -> Resu
                 if let Ok(modified) = metadata.modified() {
                     use std::time::{Duration, SystemTime};
                     let ttl = Duration::from_secs(24 * 60 * 60); // 24 hours TTL
-                    if SystemTime::now()
-                        .duration_since(modified)
-                        .unwrap_or(ttl)
-                        >= ttl
-                    {
+                    if SystemTime::now().duration_since(modified).unwrap_or(ttl) >= ttl {
                         should_refresh = true;
                     }
                 }
@@ -553,11 +549,7 @@ pub fn load_registry() -> Result<TemplateRegistry> {
             if let Ok(modified) = metadata.modified() {
                 use std::time::{Duration, SystemTime};
                 let ttl = Duration::from_secs(24 * 60 * 60); // 24 hours
-                if SystemTime::now()
-                    .duration_since(modified)
-                    .unwrap_or(ttl)
-                    < ttl
-                {
+                if SystemTime::now().duration_since(modified).unwrap_or(ttl) < ttl {
                     let contents = fs::read_to_string(&cache_path).with_context(|| {
                         format!("Failed to read cached registry at {}", cache_path.display())
                     })?;
