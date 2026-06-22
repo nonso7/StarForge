@@ -51,6 +51,7 @@ hmac = "0.12"
 rustyline = "14.0.0"
 zip = "0.6"
 tempfile = "3.8"
+similar = "2.4"
 
 [features]
 hardware-wallet = ["dep:hidapi", "dep:trezor-client"]
