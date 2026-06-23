@@ -3,7 +3,7 @@ use crate::plugins::manifest;
 use crate::plugins::registry::{self, RegisteredCommand, TrustLevel, UninstallOptions};
 use crate::plugins::{PluginLoadError, PluginManager};
 use crate::utils::print as p;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Subcommand;
 use colored::*;
 use std::path::Path;
@@ -114,7 +114,7 @@ fn install(name: String, path: Option<PathBuf>, source: Option<String>, force: b
     let lib_path = registry::resolve_plugin_library_path(&name, path)?;
     let source_str = source.as_deref().unwrap_or("");
     let config = crate::utils::config::load().unwrap_or_default();
-    let trust = registry::classify_source_with_config(source_str, &config);
+    let trust = registry::classify_source(source_str);
 
     // Warn the user about untrusted sources and require --force to proceed.
     if trust == TrustLevel::Unknown && !source_str.is_empty() && !force {
@@ -253,12 +253,9 @@ fn load() -> Result<()> {
         return Ok(());
     }
 
-    let config = crate::utils::config::load().unwrap_or_default();
-
     // Warn about any unknown-trust plugins before loading.
     for pl in reg.plugins.iter().filter(|p| {
-        registry::classify_source_with_config(&p.source, &config) == TrustLevel::Unknown
-            && !p.source.is_empty()
+        registry::classify_source(&p.source) == TrustLevel::Unknown && !p.source.is_empty()
     }) {
         p::warn(&format!(
             "Plugin '{}' is from an unknown/untrusted source: {}",
@@ -407,8 +404,6 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
         return Ok(());
     }
 
-    let config = crate::utils::config::load().unwrap_or_default();
-
     let to_update: Vec<_> = match &name {
         Some(n) => {
             let found: Vec<_> = reg.plugins.iter().filter(|p| &p.name == n).collect();
@@ -458,7 +453,7 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
             continue;
         }
 
-        let trust = registry::classify_source_with_config(&pl.source, &config);
+        let trust = registry::classify_source(&pl.source);
         if trust == TrustLevel::Unknown && !yes {
             p::warn(&format!(
                 "  '{}' source '{}' is not trusted. Use --yes to force update from unknown sources.",
@@ -517,8 +512,8 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
                 }
             }
         } else {
-            // For GitHub and other sources, check if the library file on disk
-            // has been updated since install and refresh the registry timestamp.
+            // For GitHub and other sources, check if the library file on disk exists
+            // and refresh the registry metadata.
             let metadata = std::fs::metadata(&pl.path);
             match metadata {
                 Ok(m) => {
@@ -609,13 +604,12 @@ fn verify(name: Option<String>, deep: bool, runtime_check: bool) -> Result<()> {
         None => reg.plugins.iter().collect(),
     };
 
-    let config = crate::utils::config::load().unwrap_or_default();
     let mut all_ok = true;
 
     for pl in &to_check {
         let lib_exists = std::path::Path::new(&pl.path).exists();
 
-        let current_trust = registry::classify_source_with_config(&pl.source, &config);
+        let current_trust = registry::classify_source(&pl.source);
         let trust_ok = match current_trust {
             TrustLevel::Local | TrustLevel::Trusted => true,
             TrustLevel::Unknown => false,
@@ -935,4 +929,43 @@ fn print_audit_report(report: &AuditReport) {
         );
     }
     println!();
+}
+
+fn commands(_name: Option<String>) -> Result<()> {
+    p::header("Plugin Commands");
+    let reg = registry::load_registry().unwrap_or_default();
+    if reg.plugins.is_empty() {
+        p::info("No plugins installed. Use: starforge plugin install <name> --path <lib>");
+        return Ok(());
+    }
+
+    p::separator();
+    for plugin in &reg.plugins {
+        p::kv_accent("Plugin", &plugin.name);
+        if !plugin.commands.is_empty() {
+            for cmd in &plugin.commands {
+                p::info(&format!("  • {}  — {}", cmd.name, cmd.description));
+            }
+        } else {
+            p::info("  (no commands registered)");
+        }
+        println!();
+    }
+    p::separator();
+    Ok(())
+}
+
+fn discover_commands_from_library(path: &str) -> Result<Vec<RegisteredCommand>> {
+    let mut pm = PluginManager::new();
+    unsafe {
+        pm.load_plugin(path)?;
+    }
+    Ok(pm
+        .list_commands()
+        .into_iter()
+        .map(|c| RegisteredCommand {
+            name: c.name,
+            description: c.description,
+        })
+        .collect())
 }
