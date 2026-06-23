@@ -9,7 +9,8 @@
 )]
 
 mod commands;
-pub use starforge::{plugins, utils};
+pub use starforge::plugins;
+pub use starforge::utils;
 
 use clap::{Parser, Subcommand};
 use colored::*;
@@ -214,6 +215,7 @@ fn handle_external_plugin(args: Vec<String>) -> anyhow::Result<()> {
     let plugin_name = &args[0];
     let plugin_args = &args[1..];
 
+    let cfg = starforge::utils::config::load()?;
     let reg = plugins::registry::load_registry().unwrap_or_default();
     if reg.plugins.is_empty() {
         anyhow::bail!(

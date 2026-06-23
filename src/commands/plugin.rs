@@ -5,7 +5,7 @@ use crate::plugins::{PluginLoadError, PluginManager};
 use crate::utils::print as p;
 use anyhow::Result;
 use clap::Subcommand;
-use colored::*;
+use starforge::utils::config;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -113,8 +113,8 @@ pub fn handle(cmd: PluginCommands) -> Result<()> {
 fn install(name: String, path: Option<PathBuf>, source: Option<String>, force: bool) -> Result<()> {
     let lib_path = registry::resolve_plugin_library_path(&name, path)?;
     let source_str = source.as_deref().unwrap_or("");
-    let config = crate::utils::config::load().unwrap_or_default();
-    let trust = registry::classify_source(source_str);
+    let config = config::load().unwrap_or_default();
+    let trust = registry::classify_source_with_config(source_str, &config);
 
     // Warn the user about untrusted sources and require --force to proceed.
     if trust == TrustLevel::Unknown && !source_str.is_empty() && !force {
@@ -135,15 +135,31 @@ fn install(name: String, path: Option<PathBuf>, source: Option<String>, force: b
 
     let plugin_manifest = manifest::require_compatible_manifest(&lib_path, &name)?;
 
-    let discovered_commands = discover_commands_from_library(lib_path.to_str().unwrap_or_default())
-        .unwrap_or_else(|e| {
-            p::warn(&format!(
-                "Could not discover commands from '{}': {}",
-                lib_path.display(),
-                e
-            ));
-            Vec::new()
-        });
+    // Load the plugin to discover the commands and description it registers.
+    let (discovered_commands, plugin_description) = {
+        let mut pm = PluginManager::new();
+        unsafe {
+            pm.load_plugin(&lib_path).with_context(|| {
+                format!("Failed to load plugin '{}' to discover commands", name)
+            })?;
+        }
+        let commands: Vec<RegisteredCommand> = pm
+            .list_commands()
+            .into_iter()
+            .map(|c| RegisteredCommand {
+                name: c.name,
+                description: c.description,
+            })
+            .collect();
+        let description = pm
+            .list_plugins()
+            .into_iter()
+            .find(|(plugin_name, _, _)| *plugin_name == name)
+            .map(|(_, desc, _)| desc.to_string())
+            .filter(|d| !d.is_empty())
+            .unwrap_or_else(|| plugin_manifest.description.clone());
+        (commands, description)
+    };
 
     registry::install_plugin(
         &name,
@@ -151,6 +167,7 @@ fn install(name: String, path: Option<PathBuf>, source: Option<String>, force: b
         source_str,
         &plugin_manifest.starforge_version,
         &plugin_manifest.version,
+        &plugin_description,
         discovered_commands.clone(),
     )?;
 
@@ -187,20 +204,41 @@ fn list() -> Result<()> {
 
     p::kv("StarForge core version", CORE_VERSION);
     p::separator();
-    for (i, pl) in reg.plugins.iter().enumerate() {
-        println!("  {:>2}. {}", i + 1, pl.name);
-        p::kv("Path", &pl.path);
-        p::kv("Trust", pl.trust.label());
-        if !pl.source.is_empty() {
-            p::kv("Source", &pl.source);
-        }
-        if !pl.starforge_version.is_empty() {
-            p::kv("StarForge", &pl.starforge_version);
-        }
-        if i < reg.plugins.len() - 1 {
-            println!();
-        }
+
+    let entries = registry::plugin_list_entries(&reg);
+
+    let plugin_rows: Vec<Vec<String>> = entries
+        .iter()
+        .map(|entry| {
+            vec![
+                entry.name.clone(),
+                entry.version.clone(),
+                entry.trust.label().to_string(),
+                entry.description.clone(),
+            ]
+        })
+        .collect();
+    p::table(&["Name", "Version", "Trust", "Description"], &plugin_rows);
+
+    let command_rows: Vec<Vec<String>> = entries
+        .iter()
+        .flat_map(|entry| {
+            entry.commands.iter().map(|cmd| {
+                vec![
+                    entry.name.clone(),
+                    cmd.name.clone(),
+                    cmd.description.clone(),
+                ]
+            })
+        })
+        .collect();
+
+    if !command_rows.is_empty() {
+        println!();
+        p::info("Commands");
+        p::table(&["Plugin", "Command", "Description"], &command_rows);
     }
+
     p::separator();
     Ok(())
 }
@@ -252,6 +290,8 @@ fn load() -> Result<()> {
         p::info("No plugins installed. Use: starforge plugin install <name> --path <lib>");
         return Ok(());
     }
+
+    let config = config::load().unwrap_or_default();
 
     // Warn about any unknown-trust plugins before loading.
     for pl in reg.plugins.iter().filter(|p| {
@@ -404,6 +444,8 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
         return Ok(());
     }
 
+    let config = config::load().unwrap_or_default();
+
     let to_update: Vec<_> = match &name {
         Some(n) => {
             let found: Vec<_> = reg.plugins.iter().filter(|p| &p.name == n).collect();
@@ -491,6 +533,7 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
                         &pl.source,
                         &pl.starforge_version,
                         &pl.plugin_version,
+                        &pl.description,
                         pl.commands.clone(),
                     )?;
                     p::success(&format!("  '{}' updated via cargo install", pl.name));
@@ -531,14 +574,15 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
 
                     if modified > installed_epoch {
                         // Library on disk is newer — refresh the registry entry.
-                        let cmds = discover_commands_from_library(&pl.path)
-                            .unwrap_or_else(|_| pl.commands.clone());
+                        let (cmds, description) = discover_plugin_metadata(&pl.path)
+                            .unwrap_or_else(|_| (pl.commands.clone(), pl.description.clone()));
                         registry::install_plugin(
                             &pl.name,
                             std::path::Path::new(&pl.path),
                             &pl.source,
                             &pl.starforge_version,
                             &pl.plugin_version,
+                            &description,
                             cmds,
                         )?;
                         p::success(&format!(
@@ -604,6 +648,7 @@ fn verify(name: Option<String>, deep: bool, runtime_check: bool) -> Result<()> {
         None => reg.plugins.iter().collect(),
     };
 
+    let config = config::load().unwrap_or_default();
     let mut all_ok = true;
 
     for pl in &to_check {
@@ -931,41 +976,74 @@ fn print_audit_report(report: &AuditReport) {
     println!();
 }
 
-fn commands(_name: Option<String>) -> Result<()> {
-    p::header("Plugin Commands");
-    let reg = registry::load_registry().unwrap_or_default();
-    if reg.plugins.is_empty() {
-        p::info("No plugins installed. Use: starforge plugin install <name> --path <lib>");
-        return Ok(());
-    }
-
-    p::separator();
-    for plugin in &reg.plugins {
-        p::kv_accent("Plugin", &plugin.name);
-        if !plugin.commands.is_empty() {
-            for cmd in &plugin.commands {
-                p::info(&format!("  • {}  — {}", cmd.name, cmd.description));
-            }
-        } else {
-            p::info("  (no commands registered)");
-        }
-        println!();
-    }
-    p::separator();
-    Ok(())
-}
-
-fn discover_commands_from_library(path: &str) -> Result<Vec<RegisteredCommand>> {
+fn discover_plugin_metadata(path: &str) -> Result<(Vec<RegisteredCommand>, String)> {
     let mut pm = PluginManager::new();
     unsafe {
-        pm.load_plugin(path)?;
+        pm.load_plugin(path)
+            .with_context(|| format!("Failed to load plugin from {}", path))?;
     }
-    Ok(pm
+    let commands = pm
         .list_commands()
         .into_iter()
         .map(|c| RegisteredCommand {
             name: c.name,
             description: c.description,
         })
-        .collect())
+        .collect();
+    let description = pm
+        .list_plugins()
+        .into_iter()
+        .map(|(_, desc, _)| desc.to_string())
+        .find(|d| !d.is_empty())
+        .unwrap_or_default();
+    Ok((commands, description))
+}
+
+fn commands(name: Option<String>) -> Result<()> {
+    p::header("Plugin Commands");
+
+    let reg = registry::load_registry().unwrap_or_default();
+    if reg.plugins.is_empty() {
+        p::info("No plugins installed. Use: starforge plugin install <name> --path <lib>");
+        return Ok(());
+    }
+
+    let entries: Vec<_> = match &name {
+        Some(n) => {
+            let found: Vec<_> = registry::plugin_list_entries(&reg)
+                .into_iter()
+                .filter(|entry| entry.name == *n)
+                .collect();
+            if found.is_empty() {
+                anyhow::bail!(
+                    "Plugin '{}' is not installed. Run `starforge plugin list`.",
+                    n
+                );
+            }
+            found
+        }
+        None => registry::plugin_list_entries(&reg),
+    };
+
+    let rows: Vec<Vec<String>> = entries
+        .iter()
+        .flat_map(|entry| {
+            entry.commands.iter().map(|cmd| {
+                vec![
+                    entry.name.clone(),
+                    cmd.name.clone(),
+                    cmd.description.clone(),
+                ]
+            })
+        })
+        .collect();
+
+    if rows.is_empty() {
+        p::info("No commands registered. Re-install plugins to discover their commands.");
+        p::info("  starforge plugin install <name> --path <lib>");
+        return Ok(());
+    }
+
+    p::table(&["Plugin", "Command", "Description"], &rows);
+    Ok(())
 }
