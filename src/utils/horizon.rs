@@ -759,18 +759,15 @@ mod tests {
 
     #[test]
     fn check_horizon_endpoint_reports_reachable_server() {
-        let server = Server::new();
-        let _mock = server
-            .mock("GET", "/")
-            .with_status(200)
-            .create();
+        let mut server = Server::new();
+        let _mock = server.mock("GET", "/").with_status(200).create();
 
         assert!(check_horizon_endpoint(&server.url()));
     }
 
     #[test]
     fn check_soroban_rpc_reports_reachable_server() {
-        let server = Server::new();
+        let mut server = Server::new();
         let _mock = server
             .mock("POST", "/")
             .match_header("content-type", "application/json")

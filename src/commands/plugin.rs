@@ -243,11 +243,7 @@ fn commands(name: Option<String>) -> Result<()> {
             continue;
         }
         for cmd in &pl.commands {
-            println!(
-                "  {}  — {}",
-                cmd.name.cyan(),
-                cmd.description.dimmed()
-            );
+            println!("  {}  — {}", cmd.name.cyan(), cmd.description.dimmed());
         }
     }
 

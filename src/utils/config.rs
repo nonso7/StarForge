@@ -205,18 +205,15 @@ pub fn validate_config(cfg: &Config) -> Result<()> {
     }
 
     for (name, net_cfg) in &cfg.networks {
-        validate_endpoint_url(&net_cfg.horizon_url, &format!("network '{}'.horizon_url", name))?;
+        validate_endpoint_url(
+            &net_cfg.horizon_url,
+            &format!("network '{}'.horizon_url", name),
+        )?;
         if let Some(ref soroban_url) = net_cfg.soroban_rpc_url {
-            validate_endpoint_url(
-                soroban_url,
-                &format!("network '{}'.soroban_rpc_url", name),
-            )?;
+            validate_endpoint_url(soroban_url, &format!("network '{}'.soroban_rpc_url", name))?;
         }
         if let Some(ref friendbot_url) = net_cfg.friendbot_url {
-            validate_endpoint_url(
-                friendbot_url,
-                &format!("network '{}'.friendbot_url", name),
-            )?;
+            validate_endpoint_url(friendbot_url, &format!("network '{}'.friendbot_url", name))?;
         }
     }
 
@@ -712,8 +709,7 @@ mod tests {
     #[test]
     fn validate_config_rejects_invalid_horizon_url() {
         let mut cfg = Config::default();
-        cfg.networks.get_mut("testnet").unwrap().horizon_url =
-            "ftp://bad.example.com".to_string();
+        cfg.networks.get_mut("testnet").unwrap().horizon_url = "ftp://bad.example.com".to_string();
         let err = validate_config(&cfg).unwrap_err();
         assert!(err.to_string().contains("horizon_url"));
     }
