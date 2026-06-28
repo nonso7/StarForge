@@ -131,17 +131,21 @@ enum Commands {
     /// Run connectivity diagnostics for attached Ledger/Trezor devices
     Diagnostics(commands::diagnostics::DiagnosticsArgs),
 
-    /// Social features and collaboration tools
+    /// Formal verification tooling for Soroban contracts (harness, properties, CI)
     #[command(subcommand)]
-    Social(commands::social::SocialCommands),
+    Verify(commands::verify::VerifyCommands),
 
-    /// Contract documentation portal
+    /// Deployment analytics platform (track, metrics, anomalies, dashboard)
     #[command(subcommand)]
-    Docs(commands::docs::DocsCommands),
+    Analytics(commands::analytics::AnalyticsCommands),
 
-    /// Deployment orchestration for multi-contract deployments
+    /// Automated contract upgrade workflows (compat check, plan, apply, rollback)
     #[command(subcommand)]
-    Orchestrate(commands::orchestrate::OrchestrateCommands),
+    UpgradeAuto(commands::upgrade_auto::UpgradeAutoCommands),
+
+    /// Contract performance optimization engine (analyse, transform, bench, report)
+    #[command(subcommand)]
+    Optimize(commands::optimize::OptimizeCommands),
 
     /// Execute an installed plugin command (e.g. `starforge defi ...`)
     #[command(external_subcommand)]
@@ -190,9 +194,10 @@ fn main() {
         Commands::Security(_) => "security",
         Commands::Lint(_) => "lint",
         Commands::Diagnostics(_) => "diagnostics",
-        Commands::Social(_) => "social",
-        Commands::Docs(_) => "docs",
-        Commands::Orchestrate(_) => "orchestrate",
+        Commands::Verify(_) => "verify",
+        Commands::Analytics(_) => "analytics",
+        Commands::UpgradeAuto(_) => "upgrade-auto",
+        Commands::Optimize(_) => "optimize",
         Commands::External(_) => "external",
     }
     .to_string();
@@ -226,9 +231,10 @@ fn main() {
         Commands::Security(cmd) => commands::security::handle(cmd),
         Commands::Lint(args) => commands::lint::handle(args),
         Commands::Diagnostics(args) => commands::diagnostics::handle(args),
-        Commands::Social(cmd) => commands::social::handle(cmd),
-        Commands::Docs(cmd) => commands::docs::handle(cmd),
-        Commands::Orchestrate(cmd) => commands::orchestrate::handle(cmd),
+        Commands::Verify(cmd) => commands::verify::handle(cmd),
+        Commands::Analytics(cmd) => commands::analytics::handle(cmd),
+        Commands::UpgradeAuto(cmd) => commands::upgrade_auto::handle(cmd),
+        Commands::Optimize(cmd) => commands::optimize::handle(cmd),
         Commands::External(args) => handle_external_plugin(args),
     };
     let duration = start.elapsed();
