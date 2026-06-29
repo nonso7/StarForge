@@ -142,6 +142,10 @@ enum Commands {
     #[command(subcommand)]
     Perf(commands::perf::PerfCommands),
 
+    /// Advanced contract performance analysis and profiling tools
+    #[command(subcommand)]
+    AdvancedPerf(commands::perf::AdvancedPerfCommands),
+
     /// Contract documentation portal (generate, view, search)
     #[command(subcommand)]
     Docs(commands::docs::DocsCommands),
@@ -201,6 +205,7 @@ async fn main() {
         Commands::Diagnostics(_) => "diagnostics",
         Commands::TemplateVcs(_) => "template-vcs",
         Commands::Perf(_) => "perf",
+        Commands::AdvancedPerf(_) => "advanced-perf",
         Commands::Docs(_) => "docs",
         Commands::Analytics(_) => "analytics",
         Commands::External(_) => "external",
@@ -239,6 +244,7 @@ async fn main() {
         Commands::Diagnostics(args) => commands::diagnostics::handle(args).await,
         Commands::TemplateVcs(cmd) => commands::template_vcs::handle(cmd).await,
         Commands::Perf(cmd) => commands::perf::handle(cmd).await,
+        Commands::AdvancedPerf(cmd) => commands::perf::handle_advanced(cmd).await,
         Commands::Docs(cmd) => commands::docs::handle(cmd).await,
         Commands::Analytics(cmd) => commands::analytics::handle(cmd).await,
         Commands::External(args) => handle_external_plugin(args),
