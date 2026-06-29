@@ -196,14 +196,33 @@ pub fn fetch_account(public_key: &str, network: &str) -> Result<AccountResponse>
 }
 
 pub fn check_network(network: &str) -> bool {
-    if let Ok(client) = HorizonClient::for_network(network) {
-        client
-            .get_raw("/")
-            .map(|r| r.status() == 200)
-            .unwrap_or(false)
-    } else {
-        false
-    }
+    horizon_url(network)
+        .map(|url| check_horizon_endpoint(&url))
+        .unwrap_or(false)
+}
+
+pub fn check_horizon_endpoint(horizon_url: &str) -> bool {
+    let base = horizon_url.trim_end_matches('/');
+    let health_url = format!("{}/", base);
+    ureq::get(&health_url)
+        .call()
+        .map(|r| r.status() == 200)
+        .unwrap_or(false)
+}
+
+pub fn check_soroban_rpc(soroban_url: &str) -> bool {
+    let req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getLatestLedger",
+        "params": []
+    });
+
+    ureq::post(soroban_url)
+        .set("Content-Type", "application/json")
+        .send_json(req)
+        .map(|r| r.status() == 200)
+        .unwrap_or(false)
 }
 
 pub fn build_transaction_query_url(
@@ -710,16 +729,19 @@ mod tests {
     use tempfile::TempDir;
 
     static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+    static TEST_CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
     struct TestConfigGuard {
         _env_lock: MutexGuard<'static, ()>,
         _temp_dir: TempDir,
         original_home: Option<String>,
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl TestConfigGuard {
         fn new(horizon_url: &str, friendbot_url: Option<String>) -> Self {
             let env_lock = TEST_ENV_LOCK.lock().expect("test env lock");
+            let lock = TEST_CONFIG_LOCK.lock().unwrap();
             let temp_dir = tempfile::tempdir().expect("temp dir");
             let original_home = std::env::var("HOME").ok();
 
@@ -753,6 +775,7 @@ mod tests {
                 _env_lock: env_lock,
                 _temp_dir: temp_dir,
                 original_home,
+                _lock: lock,
             }
         }
     }
@@ -949,5 +972,26 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].hash, "tx-1");
         assert_eq!(records[0].paging_token.as_deref(), Some("cursor-1"));
+    }
+
+    #[test]
+    fn check_horizon_endpoint_reports_reachable_server() {
+        let mut server = Server::new();
+        let _mock = server.mock("GET", "/").with_status(200).create();
+
+        assert!(check_horizon_endpoint(&server.url()));
+    }
+
+    #[test]
+    fn check_soroban_rpc_reports_reachable_server() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("POST", "/")
+            .match_header("content-type", "application/json")
+            .with_status(200)
+            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"sequence":1}}"#)
+            .create();
+
+        assert!(check_soroban_rpc(&server.url()));
     }
 }

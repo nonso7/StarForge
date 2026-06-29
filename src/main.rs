@@ -1,15 +1,17 @@
 #![allow(
     dead_code,
+    clippy::needless_borrows_for_generic_args,
     clippy::needless_range_loop,
     clippy::redundant_closure,
     clippy::too_many_arguments,
     clippy::type_complexity,
-    clippy::unnecessary_lazy_evaluations
+    clippy::unnecessary_lazy_evaluations,
+    clippy::needless_borrow
 )]
 
 mod commands;
 pub use starforge::plugins;
-mod utils;
+pub use starforge::utils;
 
 use clap::{Parser, Subcommand};
 use colored::*;
@@ -54,6 +56,9 @@ enum Commands {
     Inspect(commands::inspect::InspectCommands),
     /// Deploy a compiled Soroban contract (.wasm)
     Deploy(commands::deploy::DeployArgs),
+    /// Deployment history, rollback, verification, and dashboard
+    #[command(subcommand)]
+    Deployments(commands::deployments::DeploymentsCommands),
     /// Show starforge config and environment info
     Info,
     /// Manage starforge configuration (telemetry, network)
@@ -102,15 +107,47 @@ enum Commands {
     #[command(subcommand)]
     Template(commands::template::TemplateCommands),
 
+    /// Interact with the remote template registry
+    #[command(subcommand)]
+    Registry(commands::registry::RegistryCommands),
+
+    /// Manage multi-signature transactions
+    #[command(subcommand)]
+    Multisig(commands::multisig_builder::MultisigCommands),
+
     /// Contract upgrade management (propose, approve, execute, rollback)
     #[command(subcommand)]
     Upgrade(commands::upgrade::UpgradeCommands),
+
+    /// Multi-contract deployment orchestration
+    #[command(subcommand)]
+    Orchestrate(commands::orchestrate::OrchestrateCommands),
+
+    /// Security hardening, validation, and monitoring
+    #[command(subcommand)]
+    Security(commands::security::SecurityCommands),
 
     /// Static analysis and linting for Soroban contracts
     Lint(commands::lint::LintArgs),
 
     /// Run connectivity diagnostics for attached Ledger/Trezor devices
     Diagnostics(commands::diagnostics::DiagnosticsArgs),
+
+    /// Template version control (versioning, branching, changelog)
+    #[command(subcommand)]
+    TemplateVcs(commands::template_vcs::TemplateVcsCommands),
+
+    /// Contract performance monitoring and metrics dashboard
+    #[command(subcommand)]
+    Perf(commands::perf::PerfCommands),
+
+    /// Contract documentation portal (generate, view, search)
+    #[command(subcommand)]
+    Docs(commands::docs::DocsCommands),
+
+    /// Contract deployment analytics, dashboards, and reporting
+    #[command(subcommand)]
+    Analytics(commands::analytics::AnalyticsCommands),
 
     /// Execute an installed plugin command (e.g. `starforge defi ...`)
     #[command(external_subcommand)]
@@ -137,6 +174,7 @@ fn main() {
         Commands::Contract(_) => "contract",
         Commands::Inspect(_) => "inspect",
         Commands::Deploy(_) => "deploy",
+        Commands::Deployments(_) => "deployments",
         Commands::Info => "info",
         Commands::Config(_) => "config",
         Commands::Telemetry(_) => "telemetry",
@@ -146,15 +184,23 @@ fn main() {
         Commands::Completions(_) => "completions",
         Commands::Shell(_) => "shell",
         Commands::Monitor(_) => "monitor",
+        Commands::Multisig(_) => "multisig",
         Commands::Tutorial(_) => "tutorial",
         Commands::Benchmark(_) => "benchmark",
         Commands::Test(_) => "test",
         Commands::Gas(_) => "gas",
         Commands::Plugin(_) => "plugin",
         Commands::Template(_) => "template",
+        Commands::Registry(_) => "registry",
         Commands::Upgrade(_) => "upgrade",
+        Commands::Orchestrate(_) => "orchestrate",
+        Commands::Security(_) => "security",
         Commands::Lint(_) => "lint",
         Commands::Diagnostics(_) => "diagnostics",
+        Commands::TemplateVcs(_) => "template-vcs",
+        Commands::Perf(_) => "perf",
+        Commands::Docs(_) => "docs",
+        Commands::Analytics(_) => "analytics",
         Commands::External(_) => "external",
     }
     .to_string();
@@ -166,6 +212,7 @@ fn main() {
         Commands::Contract(cmd) => commands::contract::handle(cmd),
         Commands::Inspect(cmd) => commands::inspect::handle(cmd),
         Commands::Deploy(args) => commands::deploy::handle(args),
+        Commands::Deployments(cmd) => commands::deployments::handle(cmd),
         Commands::Info => commands::info::handle(),
         Commands::Config(cmd) => commands::config::handle(cmd),
         Commands::Telemetry(cmd) => commands::telemetry::handle(cmd),
@@ -175,15 +222,23 @@ fn main() {
         Commands::Completions(shell) => commands::completions::handle(shell),
         Commands::Shell(args) => commands::shell::handle(args),
         Commands::Monitor(args) => commands::monitor::handle(args),
+        Commands::Multisig(cmd) => commands::multisig_builder::handle(cmd),
         Commands::Tutorial(cmd) => commands::tutorial::handle(cmd),
         Commands::Benchmark(args) => commands::benchmark::handle(args),
         Commands::Test(args) => commands::test::handle(args),
         Commands::Gas(args) => commands::gas::handle(args),
         Commands::Plugin(args) => commands::plugin::handle(args),
         Commands::Template(args) => commands::template::handle(args),
+        Commands::Registry(cmd) => commands::registry::handle(cmd),
         Commands::Upgrade(cmd) => commands::upgrade::handle(cmd),
+        Commands::Orchestrate(cmd) => commands::orchestrate::handle(cmd),
+        Commands::Security(cmd) => commands::security::handle(cmd),
         Commands::Lint(args) => commands::lint::handle(args),
         Commands::Diagnostics(args) => commands::diagnostics::handle(args),
+        Commands::TemplateVcs(cmd) => commands::template_vcs::handle(cmd),
+        Commands::Perf(cmd) => commands::perf::handle(cmd),
+        Commands::Docs(cmd) => commands::docs::handle(cmd),
+        Commands::Analytics(cmd) => commands::analytics::handle(cmd),
         Commands::External(args) => handle_external_plugin(args),
     };
     let duration = start.elapsed();

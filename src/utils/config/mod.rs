@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 pub mod migrations;
 
 use crate::utils::crypto;
@@ -188,6 +190,63 @@ pub fn validate_wallet_name(name: &str) -> Result<()> {
         anyhow::bail!("Invalid wallet name '{}': contains invalid character '{}'. Use alphanumeric, dash, or underscore.", name, bad_char);
     }
     Ok(())
+}
+
+/// Validates the full configuration schema and wallet entries.
+pub fn validate_config(cfg: &Config) -> Result<()> {
+    if cfg.version.is_empty() {
+        anyhow::bail!("Config version is missing");
+    }
+
+    if cfg.network.trim().is_empty() {
+        anyhow::bail!("Active network is not set");
+    }
+
+    validate_network_exists(cfg, &cfg.network)?;
+
+    if cfg.networks.is_empty() {
+        anyhow::bail!("No networks configured");
+    }
+
+    for (name, net_cfg) in &cfg.networks {
+        validate_endpoint_url(
+            &net_cfg.horizon_url,
+            &format!("network '{}'.horizon_url", name),
+        )?;
+        if let Some(ref soroban_url) = net_cfg.soroban_rpc_url {
+            validate_endpoint_url(soroban_url, &format!("network '{}'.soroban_rpc_url", name))?;
+        }
+        if let Some(ref friendbot_url) = net_cfg.friendbot_url {
+            validate_endpoint_url(friendbot_url, &format!("network '{}'.friendbot_url", name))?;
+        }
+    }
+
+    for wallet in &cfg.wallets {
+        validate_wallet_name(&wallet.name)?;
+        validate_public_key(&wallet.public_key)?;
+        if let Some(ref secret) = wallet.secret_key {
+            validate_secret_key(secret)?;
+        }
+        validate_network_exists(cfg, &wallet.network)?;
+    }
+
+    for source in &cfg.plugin_trust.trusted_sources {
+        validate_plugin_trust_source(source)?;
+    }
+
+    Ok(())
+}
+
+fn validate_endpoint_url(url: &str, label: &str) -> Result<()> {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "Invalid {}: must start with http:// or https:// (got '{}')",
+            label,
+            url
+        )
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -614,7 +673,192 @@ pub fn apply_migration() -> Result<Option<MigrationOutcome>> {
     Ok(Some(outcome))
 }
 
-#[allow(clippy::items_after_test_module)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DoctorStatus {
+    Pass,
+    Fail,
+}
+
+#[derive(Debug, Clone)]
+pub struct DoctorFinding {
+    pub category: &'static str,
+    pub status: DoctorStatus,
+    pub message: String,
+}
+
+impl DoctorFinding {
+    pub fn pass(category: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            category,
+            status: DoctorStatus::Pass,
+            message: message.into(),
+        }
+    }
+
+    pub fn fail(category: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            category,
+            status: DoctorStatus::Fail,
+            message: message.into(),
+        }
+    }
+}
+
+/// Read and parse `config.toml` without migration or default-network injection.
+pub fn parse_config_file() -> Result<Config> {
+    let path = config_path();
+    if !path.exists() {
+        return Ok(Config::default());
+    }
+    let contents = fs::read_to_string(&path)
+        .with_context(|| format!("Failed to read config at {}", path.display()))?;
+    toml::from_str(&contents).with_context(|| "Failed to parse config.toml")
+}
+
+fn validate_service_url(url: &str, label: &str) -> Result<()> {
+    if url.trim().is_empty() {
+        anyhow::bail!("{label} cannot be empty");
+    }
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        anyhow::bail!("{label} must use http or https");
+    }
+    Ok(())
+}
+
+/// Run structural validation checks against a loaded configuration.
+pub fn validate_config_integrity(cfg: &Config) -> Vec<DoctorFinding> {
+    let mut findings = Vec::new();
+
+    if cfg.version == CURRENT_CONFIG_VERSION {
+        findings.push(DoctorFinding::pass(
+            "schema",
+            format!("config version is {}", cfg.version),
+        ));
+    } else {
+        findings.push(DoctorFinding::fail(
+            "schema",
+            format!(
+                "unsupported config version '{}' (expected {})",
+                cfg.version, CURRENT_CONFIG_VERSION
+            ),
+        ));
+    }
+
+    match validate_network_exists(cfg, &cfg.network) {
+        Ok(()) => findings.push(DoctorFinding::pass(
+            "network",
+            format!("active network '{}' is configured", cfg.network),
+        )),
+        Err(e) => findings.push(DoctorFinding::fail("network", e.to_string())),
+    }
+
+    if cfg.wallets.is_empty() {
+        findings.push(DoctorFinding::pass("wallet", "no wallets configured"));
+    } else {
+        let mut wallet_ok = true;
+        let mut wallet_errors = Vec::new();
+        for wallet in &cfg.wallets {
+            let label = format!("wallet '{}'", wallet.name);
+            if let Err(e) = validate_wallet_name(&wallet.name) {
+                wallet_ok = false;
+                wallet_errors.push(format!("{label}: {e}"));
+            }
+            if let Err(e) = validate_public_key(&wallet.public_key) {
+                wallet_ok = false;
+                wallet_errors.push(format!("{label} public key: {e}"));
+            }
+            if let Some(ref secret) = wallet.secret_key {
+                if let Err(e) = validate_secret_key(secret) {
+                    wallet_ok = false;
+                    wallet_errors.push(format!("{label} secret key: {e}"));
+                }
+            }
+            if let Err(e) = validate_network_exists(cfg, &wallet.network) {
+                wallet_ok = false;
+                wallet_errors.push(format!("{label} network: {e}"));
+            }
+        }
+        if wallet_ok {
+            findings.push(DoctorFinding::pass(
+                "wallet",
+                format!("{} wallet(s) validated", cfg.wallets.len()),
+            ));
+        } else {
+            findings.push(DoctorFinding::fail("wallet", wallet_errors.join("; ")));
+        }
+    }
+
+    let mut network_ok = true;
+    let mut network_errors = Vec::new();
+    for (name, net) in &cfg.networks {
+        if let Err(e) = validate_service_url(&net.horizon_url, "horizon_url") {
+            network_ok = false;
+            network_errors.push(format!("network '{name}': {e}"));
+        }
+        if let Some(ref rpc) = net.soroban_rpc_url {
+            if let Err(e) = validate_service_url(rpc, "soroban_rpc_url") {
+                network_ok = false;
+                network_errors.push(format!("network '{name}' soroban RPC: {e}"));
+            }
+        }
+    }
+    if network_ok {
+        findings.push(DoctorFinding::pass(
+            "network",
+            format!("{} network(s) have valid endpoint URLs", cfg.networks.len()),
+        ));
+    } else {
+        findings.push(DoctorFinding::fail("network", network_errors.join("; ")));
+    }
+
+    let mut trust_ok = true;
+    let mut trust_errors = Vec::new();
+    for source in &cfg.plugin_trust.trusted_sources {
+        if let Err(e) = validate_plugin_trust_source(source) {
+            trust_ok = false;
+            trust_errors.push(format!("'{source}': {e}"));
+        }
+    }
+    if trust_ok {
+        findings.push(DoctorFinding::pass(
+            "plugin_trust",
+            format!(
+                "{} trusted plugin source(s) validated",
+                cfg.plugin_trust.trusted_sources.len()
+            ),
+        ));
+    } else {
+        findings.push(DoctorFinding::fail("plugin_trust", trust_errors.join("; ")));
+    }
+
+    if let Some(ref kdf) = cfg.wallet_encryption {
+        let mut enc_ok = true;
+        let mut enc_errors = Vec::new();
+        for (field, value) in [
+            ("mem", kdf.mem),
+            ("iterations", kdf.iterations),
+            ("parallelism", kdf.parallelism),
+        ] {
+            if let Some(v) = value {
+                if v == 0 {
+                    enc_ok = false;
+                    enc_errors.push(format!("{field} must be > 0"));
+                }
+            }
+        }
+        if enc_ok {
+            findings.push(DoctorFinding::pass(
+                "encryption",
+                "wallet encryption parameters are valid",
+            ));
+        } else {
+            findings.push(DoctorFinding::fail("encryption", enc_errors.join("; ")));
+        }
+    }
+
+    findings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -727,6 +971,30 @@ mod tests {
     }
 
     #[test]
+    fn validate_config_accepts_default_config() {
+        let cfg = Config::default();
+        assert!(validate_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn validate_config_rejects_missing_active_network() {
+        let cfg = Config {
+            network: "unknown-net".to_string(),
+            ..Default::default()
+        };
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("unknown-net"));
+    }
+
+    #[test]
+    fn validate_config_rejects_invalid_horizon_url() {
+        let mut cfg = Config::default();
+        cfg.networks.get_mut("testnet").unwrap().horizon_url = "ftp://bad.example.com".to_string();
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("horizon_url"));
+    }
+
+    #[test]
     fn default_config_includes_plugin_trust_sources() {
         let cfg = Config::default();
         assert_eq!(
@@ -793,6 +1061,39 @@ telemetry_enabled = true
                 "{source} should be invalid"
             );
         }
+    }
+
+    #[test]
+    fn validate_config_integrity_passes_default_config() {
+        let cfg = Config::default();
+        let findings = validate_config_integrity(&cfg);
+        assert!(
+            findings.iter().all(|f| f.status == DoctorStatus::Pass),
+            "expected all pass, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn validate_config_integrity_catches_bad_wallet_key() {
+        let mut cfg = Config::default();
+        cfg.wallets.push(WalletEntry {
+            name: "bad".to_string(),
+            public_key: "not-a-key".to_string(),
+            secret_key: None,
+            network: "testnet".to_string(),
+            created_at: String::new(),
+            funded: false,
+            rotation_history: Vec::new(),
+        });
+        let findings = validate_config_integrity(&cfg);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.category == "wallet" && f.status == DoctorStatus::Fail),
+            "expected wallet failure, got: {:?}",
+            findings
+        );
     }
 }
 

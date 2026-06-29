@@ -11,6 +11,33 @@ keywords = ["stellar", "soroban", "blockchain", "cli", "web3"]
 name = "starforge"
 path = "src/main.rs"
 
+[lib]
+name = "starforge"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+# Package-wide lint policy. These lints are intentionally relaxed for the crate
+# (including integration tests, which use lightweight mock structs and helpers).
+# Centralizing them here keeps `cargo clippy --all-targets -- -D warnings` green.
+[lints.rust]
+dead_code = "allow"
+unused_imports = "allow"
+unused_variables = "allow"
+
+[lints.clippy]
+needless_range_loop = "allow"
+redundant_closure = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+unnecessary_lazy_evaluations = "allow"
+items_after_test_module = "allow"
+needless_borrow = "allow"
+needless_borrows_for_generic_args = "allow"
+empty_line_after_doc_comments = "allow"
+expect_fun_call = "allow"
+useless_vec = "allow"
+single_match = "allow"
+
 [dependencies]
 clap     = { version = "=4.4.18", features = ["derive", "color"] }
 serde    = { version = "1.0",     features = ["derive"] }
@@ -35,7 +62,7 @@ urlencoding = "2.1"
 sha2 = "0.10"
 indicatif = "0.17.7"
 libloading = "0.8.1"
-uuid = { version = "1.6.1", features = ["v4"] }
+uuid = { version = "1.6.1", features = ["v4", "serde"] }
 hidapi = { version = "2.6.5", optional = true }
 trezor-client = { version = "0.1.5", default-features = false, features = ["stellar"], optional = true }
 zxcvbn = "=3.1.0"
@@ -53,6 +80,8 @@ zip = "0.6"
 tempfile = "3.8"
 zeroize = { version = "1.9.0", features = ["derive"] }
 similar = "2.2"
+wasm-bindgen = "0.2"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [features]
 hardware-wallet = ["dep:hidapi", "dep:trezor-client"]
@@ -61,6 +90,7 @@ hardware-wallet = ["dep:hidapi", "dep:trezor-client"]
 criterion = "0.5.1"
 tempfile = "3.8"
 mockito = "1.2"
+wasm-bindgen-test = "0.3"
 
 [[bench]]
 name = "benchmarks"

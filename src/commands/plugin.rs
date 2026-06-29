@@ -5,6 +5,7 @@ use crate::plugins::{PluginLoadError, PluginManager};
 use crate::utils::print as p;
 use anyhow::{Context, Result};
 use clap::Subcommand;
+use starforge::utils::config;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -112,8 +113,8 @@ pub fn handle(cmd: PluginCommands) -> Result<()> {
 fn install(name: String, path: Option<PathBuf>, source: Option<String>, force: bool) -> Result<()> {
     let lib_path = registry::resolve_plugin_library_path(&name, path)?;
     let source_str = source.as_deref().unwrap_or("");
-    let config = crate::utils::config::load().unwrap_or_default();
-    let trust = registry::classify_source(source_str);
+    let config = config::load().unwrap_or_default();
+    let trust = registry::classify_source_with_config(source_str, &config);
 
     // Warn the user about untrusted sources and require --force to proceed.
     if trust == TrustLevel::Unknown && !source_str.is_empty() && !force {
@@ -134,22 +135,29 @@ fn install(name: String, path: Option<PathBuf>, source: Option<String>, force: b
 
     let plugin_manifest = manifest::require_compatible_manifest(&lib_path, &name)?;
 
-    // Command discovery is best-effort: install records the manifest/path, while
-    // audit/load report runtime library failures with richer diagnostics.
-    let discovered_commands: Vec<RegisteredCommand> = match discover_commands_from_library(
-        lib_path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Plugin path is not valid UTF-8"))?,
-    ) {
-        Ok(commands) => commands,
-        Err(error) => {
-            p::warn(&format!(
-                "Plugin registered without command discovery: {}",
-                error
-            ));
-            Vec::new()
-        }
-    };
+    // Attempt to load the plugin to discover commands and description. Best-effort:
+    // libraries that cannot load at install time should not block registration.
+    let (discovered_commands, plugin_description) =
+        match discover_plugin_metadata(&lib_path.to_string_lossy()) {
+            Ok((commands, description)) => {
+                let description = if description.is_empty() {
+                    plugin_manifest.description.clone()
+                } else {
+                    description
+                };
+                (commands, description)
+            }
+            Err(e) => {
+                p::warn(&format!(
+                    "Could not load plugin '{}' to discover commands: {}",
+                    name, e
+                ));
+                p::info(
+                    "Proceeding with installation; run 'starforge plugin audit' to validate it.",
+                );
+                (Vec::new(), plugin_manifest.description.clone())
+            }
+        };
 
     registry::install_plugin(
         &name,
@@ -157,6 +165,7 @@ fn install(name: String, path: Option<PathBuf>, source: Option<String>, force: b
         source_str,
         &plugin_manifest.starforge_version,
         &plugin_manifest.version,
+        &plugin_description,
         discovered_commands.clone(),
     )?;
 
@@ -193,20 +202,41 @@ fn list() -> Result<()> {
 
     p::kv("StarForge core version", CORE_VERSION);
     p::separator();
-    for (i, pl) in reg.plugins.iter().enumerate() {
-        println!("  {:>2}. {}", i + 1, pl.name);
-        p::kv("Path", &pl.path);
-        p::kv("Trust", pl.trust.label());
-        if !pl.source.is_empty() {
-            p::kv("Source", &pl.source);
-        }
-        if !pl.starforge_version.is_empty() {
-            p::kv("StarForge", &pl.starforge_version);
-        }
-        if i < reg.plugins.len() - 1 {
-            println!();
-        }
+
+    let entries = registry::plugin_list_entries(&reg);
+
+    let plugin_rows: Vec<Vec<String>> = entries
+        .iter()
+        .map(|entry| {
+            vec![
+                entry.name.clone(),
+                entry.version.clone(),
+                entry.trust.label().to_string(),
+                entry.description.clone(),
+            ]
+        })
+        .collect();
+    p::table(&["Name", "Version", "Trust", "Description"], &plugin_rows);
+
+    let command_rows: Vec<Vec<String>> = entries
+        .iter()
+        .flat_map(|entry| {
+            entry.commands.iter().map(|cmd| {
+                vec![
+                    entry.name.clone(),
+                    cmd.name.clone(),
+                    cmd.description.clone(),
+                ]
+            })
+        })
+        .collect();
+
+    if !command_rows.is_empty() {
+        println!();
+        p::info("Commands");
+        p::table(&["Plugin", "Command", "Description"], &command_rows);
     }
+
     p::separator();
     Ok(())
 }
@@ -343,6 +373,27 @@ fn uninstall(name: String, purge: bool, yes: bool) -> Result<()> {
     Ok(())
 }
 
+fn discover_commands_from_library(lib_path: &str) -> Result<Vec<RegisteredCommand>> {
+    let path = Path::new(lib_path);
+    let mut pm = PluginManager::new();
+    unsafe {
+        pm.load_plugin(path).with_context(|| {
+            format!(
+                "Failed to load plugin from '{}' to discover commands",
+                lib_path
+            )
+        })?;
+    }
+    Ok(pm
+        .list_commands()
+        .into_iter()
+        .map(|c| RegisteredCommand {
+            name: c.name,
+            description: c.description,
+        })
+        .collect())
+}
+
 fn update(name: Option<String>, yes: bool) -> Result<()> {
     p::header("Plugin Update");
 
@@ -441,6 +492,7 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
                         &pl.source,
                         &pl.starforge_version,
                         &pl.plugin_version,
+                        &pl.description,
                         pl.commands.clone(),
                     )?;
                     p::success(&format!("  '{}' updated via cargo install", pl.name));
@@ -462,8 +514,8 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
                 }
             }
         } else {
-            // For GitHub and other sources, check if the library file on disk
-            // has been updated since install and refresh the registry timestamp.
+            // For GitHub and other sources, check if the library file on disk exists
+            // and refresh the registry metadata.
             let metadata = std::fs::metadata(&pl.path);
             match metadata {
                 Ok(m) => {
@@ -481,14 +533,15 @@ fn update(name: Option<String>, yes: bool) -> Result<()> {
 
                     if modified > installed_epoch {
                         // Library on disk is newer — refresh the registry entry.
-                        let cmds = discover_commands_from_library(&pl.path)
-                            .unwrap_or_else(|_| pl.commands.clone());
+                        let (cmds, description) = discover_plugin_metadata(&pl.path)
+                            .unwrap_or_else(|_| (pl.commands.clone(), pl.description.clone()));
                         registry::install_plugin(
                             &pl.name,
                             std::path::Path::new(&pl.path),
                             &pl.source,
                             &pl.starforge_version,
                             &pl.plugin_version,
+                            &description,
                             cmds,
                         )?;
                         p::success(&format!(
@@ -882,20 +935,27 @@ fn print_audit_report(report: &AuditReport) {
     println!();
 }
 
-fn discover_commands_from_library(path: &str) -> Result<Vec<RegisteredCommand>> {
+fn discover_plugin_metadata(path: &str) -> Result<(Vec<RegisteredCommand>, String)> {
     let mut pm = PluginManager::new();
     unsafe {
         pm.load_plugin(path)
             .with_context(|| format!("Failed to load plugin from {}", path))?;
     }
-    Ok(pm
+    let commands = pm
         .list_commands()
         .into_iter()
         .map(|c| RegisteredCommand {
             name: c.name,
             description: c.description,
         })
-        .collect())
+        .collect();
+    let description = pm
+        .list_plugins()
+        .into_iter()
+        .map(|(_, desc, _)| desc.to_string())
+        .find(|d| !d.is_empty())
+        .unwrap_or_default();
+    Ok((commands, description))
 }
 
 fn commands(name: Option<String>) -> Result<()> {
@@ -907,9 +967,12 @@ fn commands(name: Option<String>) -> Result<()> {
         return Ok(());
     }
 
-    let plugins: Vec<_> = match &name {
+    let entries: Vec<_> = match &name {
         Some(n) => {
-            let found: Vec<_> = reg.plugins.iter().filter(|p| &p.name == n).collect();
+            let found: Vec<_> = registry::plugin_list_entries(&reg)
+                .into_iter()
+                .filter(|entry| entry.name == *n)
+                .collect();
             if found.is_empty() {
                 anyhow::bail!(
                     "Plugin '{}' is not installed. Run `starforge plugin list`.",
@@ -918,26 +981,28 @@ fn commands(name: Option<String>) -> Result<()> {
             }
             found
         }
-        None => reg.plugins.iter().collect(),
+        None => registry::plugin_list_entries(&reg),
     };
 
-    let mut any = false;
-    for pl in &plugins {
-        if pl.commands.is_empty() {
-            continue;
-        }
-        any = true;
-        p::kv_accent("Plugin", &pl.name);
-        for cmd in &pl.commands {
-            println!("  starforge {}  — {}", cmd.name, cmd.description);
-        }
-        println!();
-    }
+    let rows: Vec<Vec<String>> = entries
+        .iter()
+        .flat_map(|entry| {
+            entry.commands.iter().map(|cmd| {
+                vec![
+                    entry.name.clone(),
+                    cmd.name.clone(),
+                    cmd.description.clone(),
+                ]
+            })
+        })
+        .collect();
 
-    if !any {
+    if rows.is_empty() {
         p::info("No commands registered. Re-install plugins to discover their commands.");
         p::info("  starforge plugin install <name> --path <lib>");
+        return Ok(());
     }
 
+    p::table(&["Plugin", "Command", "Description"], &rows);
     Ok(())
 }
