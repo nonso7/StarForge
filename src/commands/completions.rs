@@ -25,8 +25,8 @@ pub enum CompletionShell {
     Fish,
 }
 
-pub fn handle(args: CompletionArgs) -> Result<()> {
-    let shell = match args.shell {
+pub async fn handle(shell: CompletionShell) -> Result<()> {
+    let shell = match shell {
         CompletionShell::Bash => Shell::Bash,
         CompletionShell::Zsh => Shell::Zsh,
         CompletionShell::Fish => Shell::Fish,

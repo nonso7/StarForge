@@ -90,7 +90,7 @@ pub enum PluginTrustCommands {
     Reset,
 }
 
-pub fn handle(cmd: ConfigCommands) -> Result<()> {
+pub async fn handle(cmd: ConfigCommands) -> Result<()> {
     match cmd {
         ConfigCommands::Show => show(),
         ConfigCommands::Set { key, value } => set_value(&key, &value),
@@ -102,7 +102,7 @@ pub fn handle(cmd: ConfigCommands) -> Result<()> {
             parallelism,
             reset,
         } => set_encryption(mem, iterations, parallelism, reset),
-        ConfigCommands::Doctor => crate::commands::doctor::run(),
+        ConfigCommands::Doctor => crate::commands::doctor::run().await,
         ConfigCommands::Db(cmd) => handle_db(cmd),
     }
 }

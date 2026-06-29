@@ -157,26 +157,16 @@ fn send_email(destination: &str, _template: &str, data: &HashMap<String, String>
 }
 
 fn send_slack(destination: &str, _template: &str, data: &HashMap<String, String>) -> Result<()> {
-    let msg = data
-        .get("message")
-        .map(|s| s.as_str())
-        .unwrap_or("Deployment notification");
-    info(&format!(
-        "Slack notification queued to {}: {}",
-        destination, msg
-    ));
+    let default_msg = "Deployment notification".to_string();
+    let msg = data.get("message").unwrap_or(&default_msg);
+    info(&format!("Slack notification queued to {}: {}", destination, msg));
     Ok(())
 }
 
 fn send_discord(destination: &str, _template: &str, data: &HashMap<String, String>) -> Result<()> {
-    let msg = data
-        .get("message")
-        .map(|s| s.as_str())
-        .unwrap_or("Deployment notification");
-    info(&format!(
-        "Discord notification queued to {}: {}",
-        destination, msg
-    ));
+    let default_msg = "Deployment notification".to_string();
+    let msg = data.get("message").unwrap_or(&default_msg);
+    info(&format!("Discord notification queued to {}: {}", destination, msg));
     Ok(())
 }
 

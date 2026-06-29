@@ -46,13 +46,8 @@ pub struct LintReport {
     pub fixed_file: Option<String>,
 }
 
-pub fn handle(args: LintArgs) -> Result<()> {
-    if !args.path.exists() {
-        bail!("File does not exist: {}", args.path.display());
-    }
-
-    let bytes =
-        fs::read(&args.path).with_context(|| format!("Failed to read {}", args.path.display()))?;
+pub async fn handle(args: LintArgs) -> Result<()> {
+    let path = Path::new(&args.path);
 
     let wat = wasmprinter::print_bytes(&bytes)
         .with_context(|| format!("Failed to render WAT for {}", args.path.display()))?;
