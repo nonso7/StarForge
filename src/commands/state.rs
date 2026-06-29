@@ -115,9 +115,9 @@ pub struct RollbackArgs {
     pub out: Option<PathBuf>,
 }
 
-pub fn handle(cmd: StateCommands) -> Result<()> {
+pub async fn handle(cmd: StateCommands) -> Result<()> {
     match cmd {
-        StateCommands::Snapshot(args) => handle_snapshot(args),
+        StateCommands::Snapshot(args) => handle_snapshot(args).await,
         StateCommands::List(args) => handle_list(args),
         StateCommands::Diff(args) => handle_diff(args),
         StateCommands::Migrate(args) => handle_migrate(args),
@@ -127,7 +127,7 @@ pub fn handle(cmd: StateCommands) -> Result<()> {
     }
 }
 
-fn handle_snapshot(args: SnapshotArgs) -> Result<()> {
+async fn handle_snapshot(args: SnapshotArgs) -> Result<()> {
     config::validate_contract_id(&args.contract)?;
     p::header("Contract State Snapshot");
 
@@ -138,7 +138,7 @@ fn handle_snapshot(args: SnapshotArgs) -> Result<()> {
     } else {
         p::kv("Source", &format!("RPC ({})", args.network));
         config::validate_network(&args.network)?;
-        let inspect = soroban::inspect_contract(&args.contract, &args.network)?;
+        let inspect = soroban::inspect_contract(&args.contract, &args.network).await?;
         sm::StateSnapshot::from_inspect(&inspect, &args.network, args.label.clone())
     };
 

@@ -260,6 +260,10 @@ async fn main() {
         Commands::Perf(cmd) => commands::perf::handle(cmd).await,
         Commands::Docs(cmd) => commands::docs::handle(cmd).await,
         Commands::Analytics(cmd) => commands::analytics::handle(cmd).await,
+        Commands::State(cmd) => commands::state::handle(cmd).await,
+        Commands::Fuzz(cmd) => commands::fuzz::handle(cmd),
+        Commands::Events(cmd) => commands::events::handle(cmd),
+        Commands::DeployMonitor(cmd) => commands::deploy_monitor::handle(cmd).await,
         Commands::External(args) => handle_external_plugin(args),
     };
     let duration = start.elapsed();

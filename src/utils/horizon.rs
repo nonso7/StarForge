@@ -230,7 +230,6 @@ pub async fn fetch_transactions_filtered(
     network: &str,
     filter: TxFilter,
 ) -> Result<Vec<TransactionRecord>> {
-    let client = HorizonClient::for_network(network)?;
     let url = build_transaction_query_url(public_key, network, &filter)?;
     let res = HTTP_CLIENT.get(&url).send().await.with_context(|| {
         format!(

@@ -32,7 +32,10 @@ jobs:
   cargo-fuzz:
     name: Guided Fuzzing (nightly)
     runs-on: ubuntu-latest
-    # Non-blocking: nightly + libFuzzer can be flaky; failures should not gate PRs.
+    # Only run on the nightly schedule: guided fuzzing is slow and nightly +
+    # libFuzzer can be flaky, so it should not run (or appear) on every PR/push.
+    if: github.event_name == 'schedule'
+    # Non-blocking even when scheduled: failures should never gate the branch.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

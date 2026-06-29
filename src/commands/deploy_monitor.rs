@@ -65,27 +65,34 @@ pub struct FailuresArgs {
     pub alert: bool,
 }
 
-pub fn handle(cmd: DeployMonitorCommands) -> Result<()> {
+pub async fn handle(cmd: DeployMonitorCommands) -> Result<()> {
     match cmd {
-        DeployMonitorCommands::Status(args) => handle_status(args),
-        DeployMonitorCommands::Watch(args) => handle_watch(args),
-        DeployMonitorCommands::Health(args) => handle_health(args),
-        DeployMonitorCommands::Dashboard(args) => handle_dashboard(args),
+        DeployMonitorCommands::Status(args) => handle_status(args).await,
+        DeployMonitorCommands::Watch(args) => handle_watch(args).await,
+        DeployMonitorCommands::Health(args) => handle_health(args).await,
+        DeployMonitorCommands::Dashboard(args) => handle_dashboard(args).await,
         DeployMonitorCommands::Failures(args) => handle_failures(args),
     }
 }
 
 /// Probe live infrastructure for a deployment, caching per-network reachability
 /// for the duration of one monitoring pass.
-fn probe(record: &DeployRecord, net_cache: &mut HashMap<String, bool>) -> dm::LivenessProbe {
-    let reachable = *net_cache
-        .entry(record.network.clone())
-        .or_insert_with(|| horizon::check_network(&record.network));
+async fn probe(record: &DeployRecord, net_cache: &mut HashMap<String, bool>) -> dm::LivenessProbe {
+    let reachable = match net_cache.get(&record.network) {
+        Some(v) => *v,
+        None => {
+            let v = horizon::check_network(&record.network).await;
+            net_cache.insert(record.network.clone(), v);
+            v
+        }
+    };
 
     let contract_live = match (&record.contract_id, reachable, &record.status) {
-        (Some(cid), true, DeployStatus::Success) => {
-            Some(soroban::inspect_contract(cid, &record.network).is_ok())
-        }
+        (Some(cid), true, DeployStatus::Success) => Some(
+            soroban::inspect_contract(cid, &record.network)
+                .await
+                .is_ok(),
+        ),
         _ => None,
     };
 
@@ -97,12 +104,14 @@ fn probe(record: &DeployRecord, net_cache: &mut HashMap<String, bool>) -> dm::Li
     }
 }
 
-fn assess_all(records: &[DeployRecord]) -> Vec<dm::DeploymentHealth> {
+async fn assess_all(records: &[DeployRecord]) -> Vec<dm::DeploymentHealth> {
     let mut net_cache: HashMap<String, bool> = HashMap::new();
-    records
-        .iter()
-        .map(|r| dm::assess_health(r, &probe(r, &mut net_cache)))
-        .collect()
+    let mut out = Vec::with_capacity(records.len());
+    for r in records {
+        let probe = probe(r, &mut net_cache).await;
+        out.push(dm::assess_health(r, &probe));
+    }
+    out
 }
 
 fn filtered_records(network: &Option<String>, limit: usize) -> Result<Vec<DeployRecord>> {
@@ -116,7 +125,7 @@ fn filtered_records(network: &Option<String>, limit: usize) -> Result<Vec<Deploy
     Ok(records)
 }
 
-fn handle_status(args: StatusArgs) -> Result<()> {
+async fn handle_status(args: StatusArgs) -> Result<()> {
     let records = filtered_records(&args.network, args.limit)?;
     p::header("Deployment Health Status");
     if records.is_empty() {
@@ -124,7 +133,7 @@ fn handle_status(args: StatusArgs) -> Result<()> {
         return Ok(());
     }
 
-    let healths = assess_all(&records);
+    let healths = assess_all(&records).await;
     p::separator();
     for h in &healths {
         let badge = format!("{} {}", h.health.symbol(), h.health.label());
@@ -145,11 +154,11 @@ fn handle_status(args: StatusArgs) -> Result<()> {
     Ok(())
 }
 
-fn handle_health(args: HealthArgs) -> Result<()> {
+async fn handle_health(args: HealthArgs) -> Result<()> {
     let record = deploy_history::get_record(&args.id)?
         .ok_or_else(|| anyhow::anyhow!("No deployment matching '{}'", args.id))?;
     let mut net_cache = HashMap::new();
-    let health = dm::assess_health(&record, &probe(&record, &mut net_cache));
+    let health = dm::assess_health(&record, &probe(&record, &mut net_cache).await);
 
     p::header("Deployment Health");
     p::kv("Deployment", &record.id);
@@ -174,9 +183,9 @@ fn handle_health(args: HealthArgs) -> Result<()> {
     Ok(())
 }
 
-fn handle_dashboard(args: DashboardArgs) -> Result<()> {
+async fn handle_dashboard(args: DashboardArgs) -> Result<()> {
     let records = filtered_records(&args.network, usize::MAX)?;
-    let healths = assess_all(&records);
+    let healths = assess_all(&records).await;
     let summary = dm::summarize(&healths);
 
     if args.json {
@@ -256,7 +265,7 @@ fn handle_failures(args: FailuresArgs) -> Result<()> {
     anyhow::bail!("{} deployment failure(s) detected", failures.len());
 }
 
-fn handle_watch(args: WatchArgs) -> Result<()> {
+async fn handle_watch(args: WatchArgs) -> Result<()> {
     p::header("Deployment Monitoring (live)");
     p::kv("Interval", &format!("{}s", args.interval));
     if let Some(net) = &args.network {
@@ -276,7 +285,7 @@ fn handle_watch(args: WatchArgs) -> Result<()> {
 
     while running.load(Ordering::SeqCst) {
         let records = filtered_records(&args.network, usize::MAX)?;
-        let healths = assess_all(&records);
+        let healths = assess_all(&records).await;
         let previous = dm::load_snapshot()?;
         let changes = dm::diff_snapshot(&previous, &healths);
 
