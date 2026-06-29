@@ -91,6 +91,7 @@ criterion = "0.5.1"
 tempfile = "3.8"
 mockito = "1.2"
 wasm-bindgen-test = "0.3"
+proptest = "1.5"
 
 [[bench]]
 name = "benchmarks"

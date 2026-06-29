@@ -1,12 +1,12 @@
 use anyhow::Result;
+use chrono::Utc;
 use colored::*;
-#[allow(unused_imports)]
-use std::process::Command;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
-use chrono::Utc;
+#[allow(unused_imports)]
+use std::process::Command;
 
 pub fn info(message: &str) {
     println!("  {} {}", "•".bright_blue(), message);
@@ -122,7 +122,11 @@ pub fn add_channel(channel_type: &str, destination: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn send_notification(template_name: &str, data: &HashMap<String, String>, severity: &str) -> Result<()> {
+pub fn send_notification(
+    template_name: &str,
+    data: &HashMap<String, String>,
+    severity: &str,
+) -> Result<()> {
     let channels = load_channels()?;
 
     let event = NotificationEvent {
@@ -157,7 +161,10 @@ fn send_slack(destination: &str, _template: &str, data: &HashMap<String, String>
         .get("message")
         .map(|s| s.as_str())
         .unwrap_or("Deployment notification");
-    info(&format!("Slack notification queued to {}: {}", destination, msg));
+    info(&format!(
+        "Slack notification queued to {}: {}",
+        destination, msg
+    ));
     Ok(())
 }
 
@@ -166,7 +173,10 @@ fn send_discord(destination: &str, _template: &str, data: &HashMap<String, Strin
         .get("message")
         .map(|s| s.as_str())
         .unwrap_or("Deployment notification");
-    info(&format!("Discord notification queued to {}: {}", destination, msg));
+    info(&format!(
+        "Discord notification queued to {}: {}",
+        destination, msg
+    ));
     Ok(())
 }
 

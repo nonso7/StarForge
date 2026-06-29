@@ -149,6 +149,22 @@ enum Commands {
     #[command(subcommand)]
     Analytics(commands::analytics::AnalyticsCommands),
 
+    /// Contract state snapshots, diffing, and migration tooling
+    #[command(subcommand)]
+    State(commands::state::StateCommands),
+
+    /// Contract fuzzing, property-based testing, and mutation testing
+    #[command(subcommand)]
+    Fuzz(commands::fuzz::FuzzCommands),
+
+    /// Real-time contract event streaming, routing, alerting, and analytics
+    #[command(subcommand)]
+    Events(commands::events::EventsCommands),
+
+    /// Deployment monitoring service (health, failure detection, alerting)
+    #[command(subcommand)]
+    DeployMonitor(commands::deploy_monitor::DeployMonitorCommands),
+
     /// Execute an installed plugin command (e.g. `starforge defi ...`)
     #[command(external_subcommand)]
     External(Vec<String>),
@@ -201,6 +217,10 @@ fn main() {
         Commands::Perf(_) => "perf",
         Commands::Docs(_) => "docs",
         Commands::Analytics(_) => "analytics",
+        Commands::State(_) => "state",
+        Commands::Fuzz(_) => "fuzz",
+        Commands::Events(_) => "events",
+        Commands::DeployMonitor(_) => "deploy-monitor",
         Commands::External(_) => "external",
     }
     .to_string();
@@ -239,6 +259,10 @@ fn main() {
         Commands::Perf(cmd) => commands::perf::handle(cmd),
         Commands::Docs(cmd) => commands::docs::handle(cmd),
         Commands::Analytics(cmd) => commands::analytics::handle(cmd),
+        Commands::State(cmd) => commands::state::handle(cmd),
+        Commands::Fuzz(cmd) => commands::fuzz::handle(cmd),
+        Commands::Events(cmd) => commands::events::handle(cmd),
+        Commands::DeployMonitor(cmd) => commands::deploy_monitor::handle(cmd),
         Commands::External(args) => handle_external_plugin(args),
     };
     let duration = start.elapsed();
