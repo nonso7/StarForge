@@ -23,6 +23,7 @@ pub mod print;
 pub mod profiler;
 pub mod registry;
 pub mod repl;
+pub mod rollback_testing;
 pub mod sandbox;
 pub mod security;
 pub mod social;
