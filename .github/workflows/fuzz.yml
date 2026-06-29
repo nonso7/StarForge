@@ -15,6 +15,11 @@ on:
     # Nightly guided-fuzzing run at 03:17 UTC.
     - cron: "17 3 * * *"
 
+# Harden against transient crates.io download failures on the runners.
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   property:
     name: Property-Based & Engine Tests
