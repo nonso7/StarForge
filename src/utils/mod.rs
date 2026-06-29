@@ -9,6 +9,7 @@ pub mod crypto;
 pub mod database;
 pub mod deploy_history;
 pub mod deploy_orchestrator;
+pub mod doc_generator;
 pub mod docs;
 pub mod hardware_wallet;
 pub mod horizon;
