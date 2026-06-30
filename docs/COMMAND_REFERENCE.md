@@ -134,6 +134,8 @@ starforge contract generate-bindings ./token.wasm --lang rust
 | Subcommand | Purpose |
 |------------|---------|
 | `upgrade prepare` | Validate upgrade WASM (`--contract-id`, `--wasm`) |
+| `upgrade auto compat` | Compare old/new WASM ABI and storage layout (`--old-wasm`, `--new-wasm`) |
+| `upgrade auto plan` | Generate compatibility-aware upgrade plan and migration template |
 | `upgrade propose` | Create governance proposal |
 | `upgrade list` / `status` | List pending proposals |
 | `upgrade approve` | Approve proposal |
