@@ -124,6 +124,10 @@ enum Commands {
     #[command(subcommand)]
     Upgrade(commands::upgrade::UpgradeCommands),
 
+    /// Contract upgrade governance (proposals, voting, timelock, audit)
+    #[command(subcommand)]
+    Governance(commands::governance::GovernanceCommands),
+
     /// Multi-contract deployment orchestration
     #[command(subcommand)]
     Orchestrate(commands::orchestrate::OrchestrateCommands),
@@ -219,6 +223,7 @@ async fn main() {
         Commands::Template(_) => "template",
         Commands::Registry(_) => "registry",
         Commands::Upgrade(_) => "upgrade",
+        Commands::Governance(_) => "governance",
         Commands::Orchestrate(_) => "orchestrate",
         Commands::Security(_) => "security",
         Commands::Audit(_) => "audit",
@@ -263,6 +268,7 @@ async fn main() {
         Commands::Template(args) => commands::template::handle(args).await,
         Commands::Registry(cmd) => commands::registry::handle(cmd).await,
         Commands::Upgrade(cmd) => commands::upgrade::handle(cmd).await,
+        Commands::Governance(cmd) => commands::governance::handle(cmd).await,
         Commands::Orchestrate(cmd) => commands::orchestrate::handle(cmd).await,
         Commands::Security(cmd) => commands::security::handle(cmd).await,
         Commands::Audit(args) => commands::audit::handle(args).await,

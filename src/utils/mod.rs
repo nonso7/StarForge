@@ -16,7 +16,7 @@ pub mod deploy_history;
 pub mod deploy_orchestrator;
 pub mod deployment_verify;
 pub mod docs;
-pub mod gas_analyzer;
+pub mod governance;
 pub mod hardware_wallet;
 pub mod horizon;
 pub mod logging;
