@@ -49,6 +49,9 @@ pub struct AuditArgs {
     /// Run Mythril if installed
     #[arg(long, default_value = "true")]
     pub mythril: bool,
+    /// Scan with built-in static analysis only; skip all external tools
+    #[arg(long)]
+    pub offline: bool,
     /// Output format: text or json
     #[arg(long, default_value = "text")]
     pub format: String,
@@ -383,8 +386,8 @@ fn handle_audit(args: AuditArgs) -> Result<()> {
     p::kv("Contract", &args.path.display().to_string());
 
     let cfg = AuditConfig {
-        run_slither: args.slither,
-        run_mythril: args.mythril,
+        run_slither: args.slither && !args.offline,
+        run_mythril: args.mythril && !args.offline,
     };
 
     let result = run_audit(&args.path, &cfg)?;
