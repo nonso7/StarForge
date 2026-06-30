@@ -26,6 +26,7 @@ pub mod plugin;
 pub mod registry;
 pub mod schedule;
 pub mod security;
+pub mod simulate;
 pub mod shell;
 pub mod social;
 pub mod telemetry;
