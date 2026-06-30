@@ -51,6 +51,9 @@ enum Commands {
     /// Contract operations (invoke, inspect, etc.)
     #[command(subcommand)]
     Contract(commands::contract::ContractCommands),
+    /// Debug Soroban contracts with breakpoints, stepping, and inspection
+    #[command(subcommand)]
+    Debug(commands::debug::DebugCommands),
     /// Deep contract storage inspection (state, key, storage)
     #[command(subcommand)]
     Inspect(commands::inspect::InspectCommands),
@@ -136,6 +139,10 @@ enum Commands {
     #[command(subcommand)]
     Schedule(commands::schedule::ScheduleCommands),
 
+    /// Local network simulation and testing environment
+    #[command(subcommand)]
+    Simulate(commands::simulate::SimulateCommands),
+
     /// Backup and disaster recovery for contract state and code
     #[command(subcommand)]
     Backup(commands::backup::BackupCommands),
@@ -162,6 +169,10 @@ enum Commands {
     #[command(subcommand)]
     Analytics(commands::analytics::AnalyticsCommands),
 
+    /// Approval workflow for contract deployments (multi-level approvals, audit, compliance)
+    #[command(subcommand)]
+    Approval(commands::approval::ApprovalCommands),
+
     /// Execute an installed plugin command (e.g. `starforge defi ...`)
     #[command(external_subcommand)]
     External(Vec<String>),
@@ -186,6 +197,7 @@ async fn main() {
         Commands::Wallet(_) => "wallet",
         Commands::New(_) => "new",
         Commands::Contract(_) => "contract",
+        Commands::Debug(_) => "debug",
         Commands::Inspect(_) => "inspect",
         Commands::Deploy(_) => "deploy",
         Commands::Deployments(_) => "deployments",
@@ -211,6 +223,7 @@ async fn main() {
         Commands::Security(_) => "security",
         Commands::Audit(_) => "audit",
         Commands::Schedule(_) => "schedule",
+        Commands::Simulate(_) => "simulate",
         Commands::Backup(_) => "backup",
         Commands::Lint(_) => "lint",
         Commands::Diagnostics(_) => "diagnostics",
@@ -218,6 +231,7 @@ async fn main() {
         Commands::Perf(_) => "perf",
         Commands::Docs(_) => "docs",
         Commands::Analytics(_) => "analytics",
+        Commands::Approval(_) => "approval",
         Commands::External(_) => "external",
     }
     .to_string();
@@ -228,6 +242,7 @@ async fn main() {
         Commands::New(cmd) => commands::new::handle(cmd).await,
         Commands::Contract(cmd) => commands::contract::handle(cmd).await,
         Commands::Inspect(cmd) => commands::inspect::handle(cmd).await,
+        Commands::Debug(cmd) => commands::debug::handle(cmd).await,
         Commands::Deploy(args) => commands::deploy::handle(args).await,
         Commands::Deployments(cmd) => commands::deployments::handle(cmd).await,
         Commands::Info => commands::info::handle().await,
@@ -252,6 +267,7 @@ async fn main() {
         Commands::Security(cmd) => commands::security::handle(cmd).await,
         Commands::Audit(args) => commands::audit::handle(args).await,
         Commands::Schedule(cmd) => commands::schedule::handle(cmd).await,
+        Commands::Simulate(cmd) => commands::simulate::handle(cmd).await,
         Commands::Backup(cmd) => commands::backup::handle(cmd).await,
         Commands::Lint(args) => commands::lint::handle(args).await,
         Commands::Diagnostics(args) => commands::diagnostics::handle(args).await,
@@ -259,6 +275,7 @@ async fn main() {
         Commands::Perf(cmd) => commands::perf::handle(cmd).await,
         Commands::Docs(cmd) => commands::docs::handle(cmd).await,
         Commands::Analytics(cmd) => commands::analytics::handle(cmd).await,
+        Commands::Approval(cmd) => commands::approval::handle(cmd).await,
         Commands::External(args) => handle_external_plugin(args),
     };
     let duration = start.elapsed();
