@@ -7,6 +7,7 @@ pub mod config;
 pub mod confirmation;
 pub mod crypto;
 pub mod database;
+pub mod debugger;
 pub mod deploy_history;
 pub mod deploy_orchestrator;
 pub mod docs;
