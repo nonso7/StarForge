@@ -3,7 +3,7 @@ use crate::utils::{
 };
 use anyhow::Result;
 use clap::Subcommand;
-use colored::*;
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Attribute, Cell, Color, Table};
 use std::path::PathBuf;
 
 // ── Subcommand tree ───────────────────────────────────────────────────────────
@@ -141,7 +141,42 @@ pub async fn handle(cmd: GasCommands) -> Result<()> {
     }
 }
 
-// ── Existing subcommand handlers ─────────────────────────────────────────────
+// ── helpers ────────────────────────────────────────────────────────────────
+
+fn base_table() -> Table {
+    let mut t = Table::new();
+    t.load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS);
+    t
+}
+
+fn header_cell(text: &str) -> Cell {
+    Cell::new(text)
+        .add_attribute(Attribute::Bold)
+        .fg(Color::Cyan)
+}
+
+fn value_cell(text: &str) -> Cell {
+    Cell::new(text)
+}
+
+fn good_cell(text: &str) -> Cell {
+    Cell::new(text).fg(Color::Green)
+}
+
+fn warn_cell(text: &str) -> Cell {
+    Cell::new(text).fg(Color::Yellow)
+}
+
+fn bad_cell(text: &str) -> Cell {
+    Cell::new(text).fg(Color::Red)
+}
+
+fn estimate_simulation_cost(size_bytes: usize) -> u64 {
+    2_000 + (size_bytes as u64 / 8)
+}
+
+// ── subcommands ────────────────────────────────────────────────────────────
 
 fn analyze(wasm: PathBuf, network: Option<String>) -> Result<()> {
     config::validate_file_path(&wasm, Some("wasm"))?;
@@ -150,7 +185,7 @@ fn analyze(wasm: PathBuf, network: Option<String>) -> Result<()> {
     let network = args.network.unwrap_or(cfg.network);
     config::validate_network(&network)?;
 
-    p::header("Gas Profiler");
+    p::header("Gas & Compute Visualizer — Analyze");
     p::kv("Network", &network);
     p::kv("WASM", &args.wasm.display().to_string());
 
@@ -158,31 +193,56 @@ fn analyze(wasm: PathBuf, network: Option<String>) -> Result<()> {
     let report = ga::analyze_wasm_file(&args.wasm, args.label.as_deref())?;
     let elapsed = timer.elapsed();
 
-    if args.output == "json" {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        print_profile_report(&report);
-    }
+    let est_cost = estimate_simulation_cost(report.size_bytes);
 
-    if args.save {
-        let path = ga::save_report(&report)?;
-        p::kv("Report saved", path.file_name().unwrap_or_default().to_str().unwrap_or(""));
-    }
-
-    p::kv("Analysis time", &format!("{:.1}ms", elapsed.as_secs_f64() * 1000.0));
-
-    if args.fail_on_critical && report.critical_count() > 0 {
-        anyhow::bail!(
-            "{} critical gas issue(s) found. Resolve before deploying.",
-            report.critical_count()
-        );
-    }
-
-    Ok(())
-}
-
-fn print_profile_report(report: &ga::GasAnalysisReport) {
+    // ── Cost breakdown table ──────────────────────────────────────────────
     println!();
+    let mut table = base_table();
+    table.set_header(vec![
+        header_cell("Metric"),
+        header_cell("Value"),
+    ]);
+    table.add_row(vec![
+        value_cell("WASM size (bytes)"),
+        value_cell(&report.size_bytes.to_string()),
+    ]);
+    table.add_row(vec![
+        value_cell("WASM size (KB)"),
+        value_cell(&format!("{:.2} KB", report.size_bytes as f64 / 1024.0)),
+    ]);
+    table.add_row(vec![
+        value_cell("SHA-256"),
+        value_cell(&report.sha256),
+    ]);
+    table.add_row(vec![
+        value_cell("Heuristic score"),
+        if report.score >= 80 {
+            good_cell(&report.score.to_string())
+        } else if report.score >= 50 {
+            warn_cell(&report.score.to_string())
+        } else {
+            bad_cell(&report.score.to_string())
+        },
+    ]);
+    table.add_row(vec![
+        value_cell("Est. simulation cost (stroops)"),
+        value_cell(&est_cost.to_string()),
+    ]);
+    table.add_row(vec![
+        value_cell("Est. ledger footprint reads"),
+        value_cell(&format!("{}", report.size_bytes / 4096 + 1)),
+    ]);
+    table.add_row(vec![
+        value_cell("Est. auth cost (stroops)"),
+        value_cell(&format!("{}", est_cost / 10)),
+    ]);
+    table.add_row(vec![
+        value_cell("Analysis duration"),
+        value_cell(&format!("{:?}", elapsed)),
+    ]);
+    println!("{table}");
+
+    // ── Suggestions ───────────────────────────────────────────────────────
     p::separator();
 
     // Header metrics
@@ -248,51 +308,22 @@ fn print_profile_report(report: &ga::GasAnalysisReport) {
             report.medium_count()
         ));
         println!();
-        for finding in &report.findings {
-            let sev_str = match finding.severity {
-                ga::FindingSeverity::Critical => finding.severity.to_string().red().bold().to_string(),
-                ga::FindingSeverity::High => finding.severity.to_string().red().to_string(),
-                ga::FindingSeverity::Medium => finding.severity.to_string().yellow().to_string(),
-                ga::FindingSeverity::Low => finding.severity.to_string().cyan().to_string(),
-                ga::FindingSeverity::Info => finding.severity.to_string().dimmed().to_string(),
-            };
-            println!(
-                "  {} [{}]  {}",
-                finding.id.white().bold(),
-                sev_str,
-                finding.description.white()
-            );
-            println!("    {} {}", "→".dimmed(), finding.recommendation.dimmed());
-            if finding.estimated_gas_saving > 0 {
-                println!(
-                    "    {} Saves ~{} gas ({:.0}%)",
-                    "~".dimmed(),
-                    finding.estimated_gas_saving,
-                    finding.estimated_saving_pct
-                );
-            }
-            println!();
+        p::info("Optimization suggestions:");
+        let mut stbl = base_table();
+        stbl.set_header(vec![header_cell("#"), header_cell("Suggestion")]);
+        for (i, s) in report.suggestions.iter().enumerate() {
+            stbl.add_row(vec![
+                warn_cell(&(i + 1).to_string()),
+                value_cell(s),
+            ]);
         }
-    }
-
-    // Top recommendations
-    if !report.top_recommendations.is_empty() {
-        p::info("Priority Actions");
-        for (i, rec) in report.top_recommendations.iter().enumerate() {
-            println!("  {}. {}", i + 1, rec);
-        }
+        println!("{stbl}");
+    } else {
         println!();
+        p::success("No optimization suggestions — contract looks lean.");
     }
 
-    let potential_saving = report.total_estimated_gas_saving();
-    if potential_saving > 0 {
-        p::kv_accent(
-            "Potential saving",
-            &format!("~{} gas across all findings", potential_saving),
-        );
-    }
-
-    p::separator();
+    Ok(())
 }
 
 // ── optimize ──────────────────────────────────────────────────────────────────
@@ -300,370 +331,186 @@ fn print_profile_report(report: &ga::GasAnalysisReport) {
 fn optimize(args: OptimizeArgs) -> Result<()> {
     config::validate_file_path(&args.target, Some("wasm"))?;
 
-    p::header("Gas Optimizer");
-    p::kv("Input", &args.target.display().to_string());
-    p::kv("Output", &args.output.display().to_string());
+    p::header("Gas & Compute Visualizer — Optimize");
+    p::kv("Input", &target.display().to_string());
+    p::kv("Output", &output.display().to_string());
 
     let timer = profiler::Timer::start();
     let result = optimizer::optimize_wasm(&args.target, &args.output)?;
     let elapsed = timer.elapsed();
 
-    println!();
-    p::success("Optimization complete");
-    p::kv("Tool", &result.tool);
-    p::kv("Bytes in", &result.input_size_bytes.to_string());
-    p::kv("Bytes out", &result.output_size_bytes.to_string());
-    p::kv(
-        "Size reduction",
-        &format!(
-            "{} bytes ({:+.2}%)",
-            result.reduction_bytes(),
-            result.reduction_percent()
-        ),
-    );
-    p::kv("Duration", &format!("{:.1}ms", elapsed.as_secs_f64() * 1000.0));
-
-    if result.output_size_bytes < result.input_size_bytes {
-        println!();
-        p::info("Run `starforge gas profile` on the output to verify improvements.");
-    }
-
-    Ok(())
-}
-
-// ── compare ───────────────────────────────────────────────────────────────────
-
-fn compare(args: CompareArgs) -> Result<()> {
-    config::validate_file_path(&args.baseline, Some("wasm"))?;
-    config::validate_file_path(&args.candidate, Some("wasm"))?;
-
-    p::header("Gas Version Comparison");
-    p::kv("Baseline", &args.baseline.display().to_string());
-    p::kv("Candidate", &args.candidate.display().to_string());
-
-    let mut prof = profiler::Profiler::start();
-    let cmp = ga::compare_versions(&args.baseline, &args.candidate)?;
-    prof.mark("compare");
-
-    if args.output == "json" {
-        println!("{}", serde_json::to_string_pretty(&cmp)?);
-        return Ok(());
-    }
+    let old_cost = estimate_simulation_cost(result.input_size_bytes);
+    let new_cost = estimate_simulation_cost(result.output_size_bytes);
+    let cost_delta = new_cost as i64 - old_cost as i64;
 
     println!();
-    p::separator();
-
-    // Hashes
-    p::kv("Baseline SHA", &format!("{}…", &cmp.baseline_sha256[..16]));
-    p::kv("Candidate SHA", &format!("{}…", &cmp.candidate_sha256[..16]));
-    println!();
-
-    // Size comparison
-    let size_color = |delta: i64| {
-        if delta < 0 {
-            format!("{:+} bytes ({:.1}%)", delta, cmp.size_delta_pct).green().to_string()
-        } else if delta > 0 {
-            format!("{:+} bytes ({:.1}%)", delta, cmp.size_delta_pct).red().to_string()
+    let mut table = base_table();
+    table.set_header(vec![
+        header_cell("Metric"),
+        header_cell("Before"),
+        header_cell("After"),
+        header_cell("Delta"),
+    ]);
+    table.add_row(vec![
+        value_cell("Size (bytes)"),
+        value_cell(&result.input_size_bytes.to_string()),
+        value_cell(&result.output_size_bytes.to_string()),
+        if result.reduction_bytes() > 0 {
+            good_cell(&format!("-{} bytes", result.reduction_bytes()))
         } else {
-            "no change".dimmed().to_string()
-        }
-    };
-    p::kv(
-        "Baseline size",
-        &format!("{:.1} KB", cmp.baseline_size_bytes as f64 / 1024.0),
-    );
-    p::kv(
-        "Candidate size",
-        &format!("{:.1} KB", cmp.candidate_size_bytes as f64 / 1024.0),
-    );
-    p::kv_accent("Size delta", &size_color(cmp.size_delta_bytes));
-
-    // Gas cost comparison
-    println!();
-    p::kv("Baseline gas", &format!("{}", cmp.baseline_gas_cost.total));
-    p::kv("Candidate gas", &format!("{}", cmp.candidate_gas_cost.total));
-    let gas_color = if cmp.gas_delta < 0 {
-        format!("{:+} ({:.1}%)", cmp.gas_delta, cmp.gas_delta_pct)
-            .green()
-            .to_string()
-    } else if cmp.gas_delta > 0 {
-        format!("{:+} ({:.1}%)", cmp.gas_delta, cmp.gas_delta_pct)
-            .red()
-            .to_string()
-    } else {
-        "no change".dimmed().to_string()
-    };
-    p::kv_accent("Gas delta", &gas_color);
-
-    // Instruction comparison
-    println!();
-    p::kv(
-        "Baseline instructions",
-        &cmp.baseline_instruction_count.to_string(),
-    );
-    p::kv(
-        "Candidate instructions",
-        &cmp.candidate_instruction_count.to_string(),
-    );
-    let instr_color = if cmp.instruction_delta < 0 {
-        format!(
-            "{:+} ({:.1}%)",
-            cmp.instruction_delta, cmp.instruction_delta_pct
-        )
-        .green()
-        .to_string()
-    } else if cmp.instruction_delta > 0 {
-        format!(
-            "{:+} ({:.1}%)",
-            cmp.instruction_delta, cmp.instruction_delta_pct
-        )
-        .red()
-        .to_string()
-    } else {
-        "no change".dimmed().to_string()
-    };
-    p::kv("Instruction delta", &instr_color);
-
-    // Score comparison
-    println!();
-    p::kv(
-        "Baseline score",
-        &format!("{}/100", cmp.baseline_score),
-    );
-    let cand_score_str = format!("{}/100", cmp.candidate_score);
-    let cand_score_colored = if cmp.score_delta >= 0 {
-        cand_score_str.green().to_string()
-    } else {
-        cand_score_str.red().to_string()
-    };
-    p::kv_accent("Candidate score", &cand_score_colored);
-    p::kv(
-        "Score delta",
-        &format!("{:+}", cmp.score_delta),
-    );
-
-    // New / resolved findings
-    if cmp.resolved_findings > 0 {
-        println!();
-        p::success(&format!("{} finding(s) resolved.", cmp.resolved_findings));
-    }
-    if !cmp.new_findings.is_empty() {
-        println!();
-        p::warn(&format!(
-            "{} new finding(s) introduced:",
-            cmp.new_findings.len()
-        ));
-        for f in &cmp.new_findings {
-            println!("  {} [{}] {}", f.id.white(), f.severity.to_string().yellow(), f.description);
-        }
-    }
-
-    // Verdict
-    println!();
-    p::kv_accent("Verdict", &cmp.verdict);
-
-    // Profile timing
-    for pt in prof.points() {
-        p::kv(&format!("Step {}", pt.label), &format!("{:.1}ms", pt.elapsed.as_secs_f64() * 1000.0));
-    }
-
-    p::separator();
-    Ok(())
-}
-
-// ── history ───────────────────────────────────────────────────────────────────
-
-fn history(args: HistoryArgs) -> Result<()> {
-    p::header("Gas Report History");
-
-    let mut reports = ga::list_reports()?;
-    if let Some(label) = &args.label {
-        reports.retain(|r| r.contract_label == *label);
-    }
-    let shown: Vec<_> = reports.iter().take(args.limit).collect();
-
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&shown)?);
-        return Ok(());
-    }
-
-    if shown.is_empty() {
-        p::info("No gas reports found. Run `starforge gas profile <wasm>` first.");
-        return Ok(());
-    }
-
-    p::separator();
-    println!(
-        "  {:<14}  {:<22}  {:<8}  {:<10}  {:<10}  {}",
-        "ID".dimmed(),
-        "Contract".dimmed(),
-        "Score".dimmed(),
-        "Size (KB)".dimmed(),
-        "Est. Gas".dimmed(),
-        "Generated".dimmed(),
-    );
-    println!("  {}", "─".repeat(78).dimmed());
-    for r in &shown {
-        let score_str = format!("{}/100", r.optimization_score);
-        let score_colored = if r.optimization_score >= 80 {
-            score_str.green().to_string()
-        } else if r.optimization_score >= 50 {
-            score_str.yellow().to_string()
+            warn_cell("0 bytes")
+        },
+    ]);
+    table.add_row(vec![
+        value_cell("Size (KB)"),
+        value_cell(&format!("{:.2}", result.input_size_bytes as f64 / 1024.0)),
+        value_cell(&format!("{:.2}", result.output_size_bytes as f64 / 1024.0)),
+        good_cell(&format!("{:+.2}%", result.reduction_percent())),
+    ]);
+    table.add_row(vec![
+        value_cell("Est. sim cost (stroops)"),
+        value_cell(&old_cost.to_string()),
+        value_cell(&new_cost.to_string()),
+        if cost_delta < 0 {
+            good_cell(&format!("{:+}", cost_delta))
         } else {
-            score_str.red().to_string()
-        };
-        println!(
-            "  {:<14}  {:<22}  {:<8}  {:<10.1}  {:<10}  {}",
-            r.id.cyan(),
-            r.contract_label,
-            score_colored,
-            r.size_bytes as f64 / 1024.0,
-            r.gas_cost.total,
-            r.generated_at.get(..16).unwrap_or(&r.generated_at).dimmed(),
-        );
-    }
-    p::separator();
-    Ok(())
-}
+            warn_cell(&format!("{:+}", cost_delta))
+        },
+    ]);
+    table.add_row(vec![
+        value_cell("Optimizer"),
+        value_cell(&result.tool),
+        value_cell("—"),
+        value_cell("—"),
+    ]);
+    table.add_row(vec![
+        value_cell("Duration"),
+        value_cell(&format!("{:?}", elapsed)),
+        value_cell("—"),
+        value_cell("—"),
+    ]);
+    println!("{table}");
 
-// ── show ──────────────────────────────────────────────────────────────────────
-
-fn show(args: ShowArgs) -> Result<()> {
-    p::header("Gas Report");
-    let report = ga::load_report(&args.id)?;
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        print_profile_report(&report);
-    }
-    Ok(())
-}
-
-// ── guide ─────────────────────────────────────────────────────────────────────
-
-fn guide() -> Result<()> {
-    p::header("Gas Optimization Best Practices Guide");
     println!();
+    p::success("Optimization complete — output written successfully.");
 
-    let sections: &[(&str, &[&str])] = &[
-        (
-            "1. Binary Size Reduction",
-            &[
-                "Set `opt-level = 'z'` in [profile.release] for minimum size.",
-                "Enable `lto = true` and `codegen-units = 1` for Link-Time Optimization.",
-                "Add `strip = true` (Rust 1.59+) to remove symbol tables.",
-                "Use `wasm-opt -Oz` (binaryen) as a post-build pass.",
-                "Enable `default-features = false` on all dependencies.",
-                "Audit dependencies with `cargo tree` — remove unused crates.",
-            ],
-        ),
-        (
-            "2. Panic & Error Handling",
-            &[
-                "Set `panic = \"abort\"` in [profile.release] — eliminates unwinding code.",
-                "Replace verbose `expect(\"long message\")` with short error codes.",
-                "Use `soroban_sdk::panic_with_error!` instead of `panic!`.",
-                "Avoid `unwrap()` in hot paths — panics abort the transaction and waste fees.",
-            ],
-        ),
-        (
-            "3. Removing Debug Code",
-            &[
-                "Strip all `println!`, `eprintln!`, and `dbg!` calls before building for release.",
-                "Use `#[cfg(not(test))]` or feature flags to gate debug-only code.",
-                "Avoid `log::` crates in contract code — they add bloat with no effect on-chain.",
-            ],
-        ),
-        (
-            "4. Storage & State Optimization",
-            &[
-                "Prefer `Temporary` storage for ephemeral data — cheaper to write and auto-expired.",
-                "Batch storage reads: cache `env.storage().get()` results in local variables.",
-                "Pack related small values into a single storage key using a struct.",
-                "Use `soroban_sdk::Map` and `Vec` instead of `std` equivalents.",
-                "Minimize the number of distinct storage keys touched per invocation.",
-            ],
-        ),
-        (
-            "5. Computation & CPU Gas",
-            &[
-                "Move expensive off-chain computations off-chain where possible.",
-                "Avoid nested loops over storage-backed collections.",
-                "Prefer integer arithmetic over floating-point (no f64 in Soroban).",
-                "Use bit manipulation instead of division/modulo for powers of two.",
-                "Cache repeated calculations in local variables within a function.",
-            ],
-        ),
-        (
-            "6. Contract Architecture",
-            &[
-                "Keep contracts small and focused — deploy large logic as separate contracts.",
-                "Use cross-contract calls sparingly; each call adds invocation overhead.",
-                "Initialize state in a dedicated `init` function, not a WASM start function.",
-                "Remove test helpers and admin utilities from the production build.",
-                "Export only public-facing functions; internal helpers should be `fn` not `pub fn`.",
-            ],
-        ),
-        (
-            "7. Toolchain & Workflow",
-            &[
-                "Use `stellar contract build` (Stellar CLI) for the canonical optimized build.",
-                "Run `starforge gas profile <wasm>` after every release build.",
-                "Run `starforge gas compare <baseline> <candidate>` on every PR.",
-                "Add the gas profile step to your CI pipeline with `--fail-on-critical`.",
-                "Track score trends with `starforge gas history` to catch regressions early.",
-            ],
-        ),
-        (
-            "8. Soroban-Specific Tips",
-            &[
-                "Understand the fee model: upload fee (per byte) + execution fee (per instruction).",
-                "Use `soroban_sdk::symbol_short!()` for short identifiers — cheaper than strings.",
-                "Events are cheap — prefer events over storage for append-only audit trails.",
-                "Auth overhead: minimize the number of `require_auth()` calls per invocation.",
-                "Bump ledger entries proactively to avoid expensive re-initialization.",
-            ],
-        ),
-    ];
-
-    for (title, tips) in sections {
-        println!("  {}", title.bright_white().bold());
-        for tip in *tips {
-            println!("    • {}", tip);
-        }
-        println!();
-    }
-
-    println!(
-        "  {}\n  {}\n  {}\n  {}",
-        "Quick-start commands:".dimmed(),
-        "  starforge gas profile <contract.wasm>".cyan(),
-        "  starforge gas compare <baseline.wasm> <optimized.wasm>".cyan(),
-        "  starforge gas history".cyan(),
-    );
-    println!();
-    p::separator();
     Ok(())
 }
 
 // ── New subcommand handlers ───────────────────────────────────────────────────
 
-fn estimate(
-    wasm: PathBuf,
-    network: String,
-    alert_threshold: Option<u64>,
-    save: bool,
-) -> Result<()> {
-    config::validate_file_path(&wasm, Some("wasm"))?;
-    config::validate_network(&network)?;
+    p::header("Gas & Compute Visualizer — Diff");
+    p::kv("Baseline", &old_wasm.display().to_string());
+    p::kv("Candidate", &new_wasm.display().to_string());
 
-    p::header("Deployment Cost Estimate");
-    p::kv("Wasm", &wasm.display().to_string());
-    p::kv("Network", &network);
+    let mut profile = profiler::Profiler::start();
+    let old_report = optimizer::analyze_wasm(&old_wasm)?;
+    profile.mark("analyze_old");
+    let new_report = optimizer::analyze_wasm(&new_wasm)?;
+    profile.mark("analyze_new");
 
-    let est = ce::estimate_deployment_cost(&wasm, &network)?;
+    let old_cost = estimate_simulation_cost(old_report.size_bytes);
+    let new_cost = estimate_simulation_cost(new_report.size_bytes);
+    let cost_delta = new_cost as i64 - old_cost as i64;
+    let cost_pct = if old_cost == 0 {
+        0.0
+    } else {
+        (cost_delta as f64 / old_cost as f64) * 100.0
+    };
+
+    let size_delta = new_report.size_bytes as i64 - old_report.size_bytes as i64;
+    let size_pct = if old_report.size_bytes == 0 {
+        0.0
+    } else {
+        (size_delta as f64 / old_report.size_bytes as f64) * 100.0
+    };
+    let comparison = optimizer::compare_gas_reports(&old_report, &new_report);
+
+    let old_auth = old_cost / 10;
+    let new_auth = new_cost / 10;
+    let auth_delta = new_auth as i64 - old_auth as i64;
+
+    let old_reads = old_report.size_bytes / 4096 + 1;
+    let new_reads = new_report.size_bytes / 4096 + 1;
+    let reads_delta = new_reads as i64 - old_reads as i64;
 
     println!();
+    let mut table = base_table();
+    table.set_header(vec![
+        header_cell("Metric"),
+        header_cell("Baseline"),
+        header_cell("Candidate"),
+        header_cell("Delta"),
+        header_cell("Change %"),
+    ]);
+
+    // Size row
+    table.add_row(vec![
+        value_cell("WASM size (bytes)"),
+        value_cell(&old_report.size_bytes.to_string()),
+        value_cell(&new_report.size_bytes.to_string()),
+        if size_delta <= 0 {
+            good_cell(&format!("{:+}", size_delta))
+        } else {
+            bad_cell(&format!("{:+}", size_delta))
+        },
+        if size_pct <= 0.0 {
+            good_cell(&format!("{:+.2}%", size_pct))
+        } else {
+            bad_cell(&format!("{:+.2}%", size_pct))
+        },
+    ]);
+
+    // Sim cost row
+    table.add_row(vec![
+        value_cell("Est. sim cost (stroops)"),
+        value_cell(&old_cost.to_string()),
+        value_cell(&new_cost.to_string()),
+        if cost_delta <= 0 {
+            good_cell(&format!("{:+}", cost_delta))
+        } else {
+            bad_cell(&format!("{:+}", cost_delta))
+        },
+        if cost_pct <= 0.0 {
+            good_cell(&format!("{:+.2}%", cost_pct))
+        } else {
+            bad_cell(&format!("{:+.2}%", cost_pct))
+        },
+    ]);
+
+    // Auth cost row
+    table.add_row(vec![
+        value_cell("Est. auth cost (stroops)"),
+        value_cell(&old_auth.to_string()),
+        value_cell(&new_auth.to_string()),
+        if auth_delta <= 0 {
+            good_cell(&format!("{:+}", auth_delta))
+        } else {
+            bad_cell(&format!("{:+}", auth_delta))
+        },
+        value_cell("—"),
+    ]);
+
+    // Ledger reads row
+    table.add_row(vec![
+        value_cell("Est. ledger footprint reads"),
+        value_cell(&old_reads.to_string()),
+        value_cell(&new_reads.to_string()),
+        if reads_delta <= 0 {
+            good_cell(&format!("{:+}", reads_delta))
+        } else {
+            bad_cell(&format!("{:+}", reads_delta))
+        },
+        value_cell("—"),
+    ]);
+
+    // Heuristic score row
+    table.add_row(vec![
+        value_cell("Heuristic score"),
+        value_cell(&old_report.score.to_string()),
+        value_cell(&new_report.score.to_string()),
+        if new_report.score >= old_report.score {
+            good_cell(&format!("{:+}", new_report.score as i32 - old_report.score as i32))
     p::separator();
 
     // Gas breakdown
@@ -701,134 +548,54 @@ fn estimate(
         ),
     );
     p::kv(
-        "Instance storage",
-        &format!("{} stroops", est.storage.instance_storage_stroops),
-    );
-    p::kv(
-        "Est. data entries",
-        &format!(
-            "{}  → {} stroops",
-            est.storage.estimated_data_entries,
-            est.storage.data_entries_fee_stroops
-        ),
-    );
-    p::kv_accent(
-        "Total storage fee",
-        &format!("{} stroops", est.storage.total_storage_stroops),
-    );
+        "Result",
+        if comparison.delta_stroops < 0 {
+            "Improved (lower estimated cost)"
+        } else if comparison.regression {
+            "Regressed (estimated fee increased by more than 5%)"
+        } else if comparison.delta_stroops > 0 {
+            "Regressed (higher estimated cost)"
+        } else {
+            bad_cell(&format!("{:+}", new_report.score as i32 - old_report.score as i32))
+        },
+        value_cell("—"),
+    ]);
 
+    println!("{table}");
+
+    // ── Verdict ───────────────────────────────────────────────────────────
     println!();
-
-    // Summary
-    p::header("Cost Summary");
-    p::kv("Base tx fee", &format!("{} stroops", est.base_fee_stroops));
-    p::kv("Gas fee", &format!("{} stroops", est.gas.total_gas_stroops));
-    p::kv(
-        "Storage fee",
-        &format!("{} stroops", est.storage.total_storage_stroops),
-    );
-    if est.large_contract_surcharge_stroops > 0 {
-        p::kv(
-            "Large contract surcharge",
-            &format!("{} stroops", est.large_contract_surcharge_stroops),
-        );
-    }
-    p::kv_accent(
-        "TOTAL estimated fee",
-        &format!(
-            "{} stroops  ({})",
-            est.total_fee_stroops,
-            est.fee_xlm_display()
-        ),
-    );
-
-    // Optimisation suggestions
-    if !est.suggestions.is_empty() {
-        println!();
-        p::header("Optimisation Suggestions");
-        for (i, s) in est.suggestions.iter().enumerate() {
-            let savings = if s.estimated_savings_stroops > 0 {
-                format!("  [saves ~{} stroops]", s.estimated_savings_stroops)
-            } else {
-                String::new()
-            };
-            println!(
-                "  {}. [{}] {}{}",
-                i + 1,
-                s.category.cyan(),
-                s.message,
-                savings.dimmed()
-            );
-        }
-    }
-
-    // Alert threshold handling
-    if let Some(threshold) = alert_threshold {
-        let alert = ce::CostAlert::new(&network, threshold, None);
-        ce::add_cost_alert(alert)?;
-        p::info(&format!(
-            "Alert saved: notify when fee > {} stroops on {}",
-            threshold, network
+    if cost_delta < 0 {
+        p::success(&format!(
+            "Candidate is BETTER — saves {} stroops ({:+.2}%)",
+            cost_delta.abs(),
+            cost_pct
         ));
-    }
-
-    // Check existing alerts
-    let fired_alerts = ce::check_cost_alerts(&est)?;
-    if !fired_alerts.is_empty() {
-        println!();
+    } else if cost_delta > 0 {
         p::warn(&format!(
-            "{} alert(s) fired for this estimate:",
-            fired_alerts.len()
+            "Candidate REGRESSED — costs {} more stroops ({:+.2}%)",
+            cost_delta,
+            cost_pct
         ));
-        for a in &fired_alerts {
-            let label = a.label.as_deref().unwrap_or("(unlabelled)");
-            p::warn(&format!(
-                "  ⚠  Threshold {} stroops exceeded on {} — {}",
-                a.threshold_stroops, a.network, label
-            ));
-        }
+    } else {
+        p::info("No change in estimated compute cost.");
     }
 
-    // Persist to history
-    if save {
-        let id = ce::record_cost_estimate(est)?;
-        println!();
-        p::info(&format!("Estimate recorded to history (id: {})", &id[..8]));
-    }
-
-    p::separator();
-    Ok(())
-}
-
-fn history(network: Option<String>, limit: usize) -> Result<()> {
-    p::header("Cost Estimation History");
-
-    let all = ce::load_cost_history()?;
-    if all.is_empty() {
-        p::info("No cost history found. Run `starforge gas estimate <wasm>` to start tracking.");
-        return Ok(());
-    }
-
-    let filtered: Vec<_> = all
-        .iter()
-        .rev()
-        .filter(|e| match &network {
-            Some(n) => &e.estimate.network == n,
-            None => true,
-        })
-        .take(limit)
-        .collect();
-
-    if filtered.is_empty() {
-        p::info("No history entries match the filter.");
-        return Ok(());
-    }
-
-    if let Some(ref n) = network {
-        p::kv("Network filter", n);
-    }
-    p::kv("Showing", &format!("{} entries (most recent first)", filtered.len()));
+    // ── Profile table ─────────────────────────────────────────────────────
     println!();
+    let mut ptbl = base_table();
+    ptbl.set_header(vec![header_cell("Step"), header_cell("Elapsed")]);
+    for point in profile.points() {
+        ptbl.add_row(vec![
+            value_cell(&point.label),
+            value_cell(&format!("{:?}", point.elapsed)),
+        ]);
+    }
+    ptbl.add_row(vec![
+        value_cell("Total"),
+        value_cell(&format!("{:?}", profile.total_elapsed())),
+    ]);
+    println!("{ptbl}");
 
     let headers = &["ID", "Network", "WASM", "Total Fee (stroops)", "XLM", "Recorded At"];
     let rows: Vec<Vec<String>> = filtered
@@ -850,65 +617,31 @@ fn history(network: Option<String>, limit: usize) -> Result<()> {
     Ok(())
 }
 
-fn alerts(action: AlertsAction) -> Result<()> {
-    match action {
-        AlertsAction::List => {
-            p::header("Cost Alert Rules");
-            let alerts = ce::load_cost_alerts()?;
-            if alerts.is_empty() {
-                p::info(
-                    "No alert rules configured. \
-                     Use `starforge gas alerts set --threshold <stroops>` to add one.",
-                );
-                return Ok(());
-            }
-            let headers = &["Network", "Threshold (stroops)", "Label", "Created"];
-            let rows: Vec<Vec<String>> = alerts
-                .iter()
-                .map(|a| {
-                    vec![
-                        a.network.clone(),
-                        a.threshold_stroops.to_string(),
-                        a.label.clone().unwrap_or_else(|| "-".to_string()),
-                        a.created_at[..10].to_string(),
-                    ]
-                })
-                .collect();
-            p::table(headers, &rows);
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        AlertsAction::Set {
-            network,
-            threshold,
-            label,
-        } => {
-            let alert = ce::CostAlert::new(&network, threshold, label);
-            let idx = ce::add_cost_alert(alert)?;
-            p::success(&format!(
-                "Alert rule #{} saved: fee > {} stroops on {}",
-                idx, threshold, network
-            ));
-        }
-
-        AlertsAction::Clear { network } => {
-            let removed = ce::clear_cost_alerts(&network)?;
-            if removed == 0 {
-                p::info("No alert rules matched — nothing removed.");
-            } else {
-                p::success(&format!("Removed {} alert rule(s).", removed));
-            }
-        }
+    #[test]
+    fn estimate_simulation_cost_zero() {
+        assert_eq!(estimate_simulation_cost(0), 2_000);
     }
-    Ok(())
-}
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+    #[test]
+    fn estimate_simulation_cost_nonzero() {
+        // 8 bytes → 2000 + 1 = 2001
+        assert_eq!(estimate_simulation_cost(8), 2_001);
+    }
 
-/// Truncate a file path to at most `max_len` characters, keeping the tail.
-fn shorten_path(path: &str, max_len: usize) -> String {
-    if path.len() <= max_len {
-        path.to_string()
-    } else {
-        format!("…{}", &path[path.len() - (max_len - 1)..])
+    #[test]
+    fn estimate_simulation_cost_large() {
+        // 80_000 bytes → 2000 + 10000 = 12000
+        assert_eq!(estimate_simulation_cost(80_000), 12_000);
+    }
+
+    #[test]
+    fn base_table_has_utf8_preset() {
+        let table = base_table();
+        // Just ensure it constructs without panic
+        let _ = table.to_string();
     }
 }
