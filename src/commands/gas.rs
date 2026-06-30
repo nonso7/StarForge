@@ -1,8 +1,12 @@
-use crate::utils::{config, optimizer, print as p, profiler};
+use crate::utils::{
+    config, cost_estimation as ce, optimizer, print as p, profiler,
+};
 use anyhow::Result;
 use clap::Subcommand;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Attribute, Cell, Color, Table};
 use std::path::PathBuf;
+
+// ── Subcommand tree ───────────────────────────────────────────────────────────
 
 #[derive(Subcommand)]
 pub enum GasCommands {
@@ -30,13 +34,110 @@ pub enum GasCommands {
         /// Path to the candidate wasm
         new_wasm: PathBuf,
     },
+    /// Estimate the full deployment cost (gas + storage fees) for a wasm
+    Estimate {
+        /// Path to the compiled wasm
+        wasm: PathBuf,
+        /// Target network for fee heuristics
+        #[arg(long, default_value = "testnet")]
+        network: String,
+        /// Alert threshold in stroops — prints a warning when the estimate
+        /// exceeds this value and saves the alert for future runs
+        #[arg(long)]
+        alert_threshold: Option<u64>,
+        /// Save this estimate to cost history
+        #[arg(long, default_value = "true")]
+        save: bool,
+    },
+    /// Show cost estimation history
+    History {
+        /// Filter by network (omit for all networks)
+        #[arg(long)]
+        network: Option<String>,
+        /// Maximum number of entries to display (most recent first)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
+    /// Manage cost alert thresholds
+    Alerts {
+        #[command(subcommand)]
+        action: AlertsAction,
+    },
 }
+
+#[derive(Subcommand)]
+pub enum AlertsAction {
+    /// List all configured alert rules
+    List,
+    /// Set a new alert threshold for a network
+    Set {
+        /// Network to alert on (`testnet`, `mainnet`, or `*` for all)
+        #[arg(long, default_value = "testnet")]
+        network: String,
+        /// Maximum acceptable fee in stroops
+        #[arg(long)]
+        threshold: u64,
+        /// Optional human-readable label for this rule
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Remove alert rules for a network (use `*` to clear all)
+    Clear {
+        /// Network whose alerts to clear, or `*` for all
+        #[arg(long, default_value = "*")]
+        network: String,
+    },
+}
+
+#[derive(Args)]
+pub struct HistoryArgs {
+    /// Filter by contract label
+    #[arg(long)]
+    pub label: Option<String>,
+    /// Maximum number of reports to show
+    #[arg(long, default_value = "20")]
+    pub limit: usize,
+    /// Output as JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args)]
+pub struct ShowArgs {
+    /// Report ID (prefix is fine)
+    pub id: String,
+    /// Output as JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+// ── Legacy diff output (kept for backward compat) ─────────────────────────────
+#[derive(Debug, Serialize)]
+struct LegacyDiffOutput {
+    old_size_bytes: usize,
+    new_size_bytes: usize,
+    old_est_sim_cost: u64,
+    new_est_sim_cost: u64,
+    delta: i64,
+    delta_pct: f64,
+    result: &'static str,
+}
+
+// ── Dispatch ──────────────────────────────────────────────────────────────────
 
 pub async fn handle(cmd: GasCommands) -> Result<()> {
     match cmd {
         GasCommands::Analyze { wasm, network } => analyze(wasm, network),
         GasCommands::Optimize { target, output } => optimize(target, output),
         GasCommands::Diff { old_wasm, new_wasm } => diff(old_wasm, new_wasm),
+        GasCommands::Estimate {
+            wasm,
+            network,
+            alert_threshold,
+            save,
+        } => estimate(wasm, network, alert_threshold, save),
+        GasCommands::History { network, limit } => history(network, limit),
+        GasCommands::Alerts { action } => alerts(action),
     }
 }
 
@@ -81,16 +182,16 @@ fn analyze(wasm: PathBuf, network: Option<String>) -> Result<()> {
     config::validate_file_path(&wasm, Some("wasm"))?;
 
     let cfg = config::load()?;
-    let network = network.unwrap_or(cfg.network);
+    let network = args.network.unwrap_or(cfg.network);
     config::validate_network(&network)?;
 
     p::header("Gas & Compute Visualizer — Analyze");
     p::kv("Network", &network);
-    p::kv("Wasm", &wasm.display().to_string());
+    p::kv("WASM", &args.wasm.display().to_string());
 
-    let t = profiler::Timer::start();
-    let report = optimizer::analyze_wasm(&wasm)?;
-    let elapsed = t.elapsed();
+    let timer = profiler::Timer::start();
+    let report = ga::analyze_wasm_file(&args.wasm, args.label.as_deref())?;
+    let elapsed = timer.elapsed();
 
     let est_cost = estimate_simulation_cost(report.size_bytes);
 
@@ -143,23 +244,69 @@ fn analyze(wasm: PathBuf, network: Option<String>) -> Result<()> {
 
     // ── Suggestions ───────────────────────────────────────────────────────
     p::separator();
-    p::kv_accent("Size (bytes)", &report.size_bytes.to_string());
-    p::kv("SHA256", &report.sha256);
-    p::kv("Heuristic score", &report.score.to_string());
-    p::kv("Risk", &format!("{:?}", report.risk));
+
+    // Header metrics
+    p::kv_accent("Contract", &report.contract_label);
+    p::kv("SHA-256", &format!("{}…", &report.wasm_sha256[..16]));
     p::kv(
-        "Estimated CPU",
-        &format!("{} instructions", report.gas.cpu_instructions),
+        "Size",
+        &format!(
+            "{:.1} KB  ({:.1}% of 128 KB limit)",
+            report.size_bytes as f64 / 1024.0,
+            report.size_limit_pct
+        ),
     );
-    p::kv("Estimated memory", &format!("{} bytes", report.gas.memory_bytes));
-    p::kv("Estimated storage", &format!("{} bytes", report.gas.storage_bytes));
-    p::kv("Estimated fee", &format!("{} stroops", report.gas.fee_stroops));
-    p::kv("Host calls", &report.resources.host_calls.to_string());
-    p::kv(
-        "Control flow ops",
-        &report.resources.control_flow_ops.to_string(),
-    );
-    if !report.suggestions.is_empty() {
+
+    // Score
+    let score_str = format!("{}/100", report.optimization_score);
+    let score_colored = if report.optimization_score >= 80 {
+        score_str.green().bold().to_string()
+    } else if report.optimization_score >= 50 {
+        score_str.yellow().bold().to_string()
+    } else {
+        score_str.red().bold().to_string()
+    };
+    p::kv_accent("Optimization score", &score_colored);
+
+    // Section profile
+    println!();
+    p::info("Section Profile");
+    let sp = &report.section_profile;
+    p::kv("Functions (local)", &sp.function_count.to_string());
+    p::kv("Imports", &sp.import_count.to_string());
+    p::kv("Exports", &sp.export_count.to_string());
+    p::kv("Globals", &sp.global_count.to_string());
+    p::kv("Data segments", &sp.data_segment_count.to_string());
+    p::kv("Code section", &format!("{:.1} KB", sp.code_section_bytes as f64 / 1024.0));
+    p::kv("Custom sections", &format!("{:.1} KB", sp.custom_section_bytes as f64 / 1024.0));
+    p::kv("Est. instructions", &report.section_profile.estimated_instruction_count.to_string());
+    p::kv("Debug symbols", if sp.has_debug_section || sp.has_name_section { "yes (strip recommended)" } else { "no" });
+
+    // Gas cost breakdown
+    println!();
+    p::info("Estimated Gas Cost Breakdown");
+    let gc = &report.gas_cost;
+    p::kv("Upload cost", &format!("{:>10} gas", gc.upload_cost));
+    p::kv("CPU (execution)", &format!("{:>10} gas", gc.cpu_cost));
+    p::kv("Imports overhead", &format!("{:>10} gas", gc.import_cost));
+    p::kv("Exports overhead", &format!("{:>10} gas", gc.export_cost));
+    p::kv("Globals overhead", &format!("{:>10} gas", gc.global_cost));
+    p::kv("Data segments", &format!("{:>10} gas", gc.data_cost));
+    p::kv_accent("Total estimated", &format!("{:>10} gas", gc.total));
+    p::kv("Cost / KB", &format!("{:.0} gas/KB", gc.cost_per_kb));
+
+    // Findings
+    if report.findings.is_empty() {
+        println!();
+        p::success("No gas issues found — WASM is well-optimized.");
+    } else {
+        println!();
+        p::info(&format!(
+            "Findings ({} critical, {} high, {} medium)",
+            report.critical_count(),
+            report.high_count(),
+            report.medium_count()
+        ));
         println!();
         p::info("Optimization suggestions:");
         let mut stbl = base_table();
@@ -179,16 +326,18 @@ fn analyze(wasm: PathBuf, network: Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn optimize(target: PathBuf, output: PathBuf) -> Result<()> {
-    config::validate_file_path(&target, Some("wasm"))?;
+// ── optimize ──────────────────────────────────────────────────────────────────
+
+fn optimize(args: OptimizeArgs) -> Result<()> {
+    config::validate_file_path(&args.target, Some("wasm"))?;
 
     p::header("Gas & Compute Visualizer — Optimize");
     p::kv("Input", &target.display().to_string());
     p::kv("Output", &output.display().to_string());
 
-    let t = profiler::Timer::start();
-    let result = optimizer::optimize_wasm(&target, &output)?;
-    let elapsed = t.elapsed();
+    let timer = profiler::Timer::start();
+    let result = optimizer::optimize_wasm(&args.target, &args.output)?;
+    let elapsed = timer.elapsed();
 
     let old_cost = estimate_simulation_cost(result.input_size_bytes);
     let new_cost = estimate_simulation_cost(result.output_size_bytes);
@@ -248,9 +397,7 @@ fn optimize(target: PathBuf, output: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn diff(old_wasm: PathBuf, new_wasm: PathBuf) -> Result<()> {
-    config::validate_file_path(&old_wasm, Some("wasm"))?;
-    config::validate_file_path(&new_wasm, Some("wasm"))?;
+// ── New subcommand handlers ───────────────────────────────────────────────────
 
     p::header("Gas & Compute Visualizer — Diff");
     p::kv("Baseline", &old_wasm.display().to_string());
@@ -365,36 +512,39 @@ fn diff(old_wasm: PathBuf, new_wasm: PathBuf) -> Result<()> {
         if new_report.score >= old_report.score {
             good_cell(&format!("{:+}", new_report.score as i32 - old_report.score as i32))
     p::separator();
-    p::kv("Old size (bytes)", &old_report.size_bytes.to_string());
-    p::kv("New size (bytes)", &new_report.size_bytes.to_string());
+
+    // Gas breakdown
+    p::header("Gas Breakdown");
     p::kv(
-        "Old est. fee",
-        &comparison.baseline_fee_stroops.to_string(),
+        "CPU instructions",
+        &format!("{}", est.gas.cpu_instructions),
     );
     p::kv(
-        "New est. fee",
-        &comparison.candidate_fee_stroops.to_string(),
+        "Memory bytes",
+        &format!("{}", est.gas.memory_bytes),
     );
     p::kv(
-        "Old est. CPU",
-        &old_report.gas.cpu_instructions.to_string(),
+        "CPU fee",
+        &format!("{} stroops", est.gas.cpu_fee_stroops),
     );
     p::kv(
-        "New est. CPU",
-        &new_report.gas.cpu_instructions.to_string(),
+        "Memory fee",
+        &format!("{} stroops", est.gas.memory_fee_stroops),
     );
-    p::kv("Old risk", &format!("{:?}", old_report.risk));
-    p::kv("New risk", &format!("{:?}", new_report.risk));
+    p::kv_accent(
+        "Total gas fee",
+        &format!("{} stroops", est.gas.total_gas_stroops),
+    );
+
+    println!();
+
+    // Storage breakdown
+    p::header("Storage Fees");
     p::kv(
-        "Estimated delta",
+        "WASM upload",
         &format!(
-            "{} ({:+.2}%)",
-            if comparison.delta_stroops >= 0 {
-                format!("+{}", comparison.delta_stroops)
-            } else {
-                comparison.delta_stroops.to_string()
-            },
-            comparison.delta_percent
+            "{} stroops  ({} bytes)",
+            est.storage.wasm_upload_fee_stroops, est.storage.wasm_upload_bytes
         ),
     );
     p::kv(
@@ -447,6 +597,23 @@ fn diff(old_wasm: PathBuf, new_wasm: PathBuf) -> Result<()> {
     ]);
     println!("{ptbl}");
 
+    let headers = &["ID", "Network", "WASM", "Total Fee (stroops)", "XLM", "Recorded At"];
+    let rows: Vec<Vec<String>> = filtered
+        .iter()
+        .map(|e| {
+            vec![
+                e.id[..8].to_string(),
+                e.estimate.network.clone(),
+                shorten_path(&e.estimate.wasm_path, 30),
+                e.estimate.total_fee_stroops.to_string(),
+                format!("{:.7}", e.estimate.total_fee_xlm),
+                e.estimate.estimated_at[..10].to_string(),
+            ]
+        })
+        .collect();
+
+    p::table(headers, &rows);
+    p::separator();
     Ok(())
 }
 
