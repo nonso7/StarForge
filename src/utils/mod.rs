@@ -18,6 +18,7 @@ pub mod deployment_verify;
 pub mod docs;
 pub mod governance;
 pub mod hardware_wallet;
+pub mod wallet_signer;
 pub mod horizon;
 pub mod logging;
 pub mod mnemonic;
