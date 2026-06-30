@@ -12,6 +12,7 @@ pub mod database;
 pub mod deploy_history;
 pub mod deploy_orchestrator;
 pub mod docs;
+pub mod gas_analyzer;
 pub mod hardware_wallet;
 pub mod horizon;
 pub mod logging;
