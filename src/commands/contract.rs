@@ -1,4 +1,4 @@
-use crate::utils::{bindings, config, crypto, print as p, soroban};
+use crate::utils::{bindings, call_graph, config, crypto, print as p, soroban};
 use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
 use colored::*;
@@ -16,6 +16,23 @@ pub enum ContractCommands {
     Upload(UploadArgs),
     /// Generate typed client bindings from embedded WASM metadata
     GenerateBindings(GenerateBindingsArgs),
+    /// Visualize cross-contract call graph from Soroban source
+    CallGraph(CallGraphArgs),
+}
+
+#[derive(Args)]
+pub struct CallGraphArgs {
+    /// Path to Soroban contract source file (.rs)
+    pub path: PathBuf,
+    /// Output format: ascii (default), dot, json
+    #[arg(long, default_value = "ascii")]
+    pub format: String,
+    /// Save output to file instead of stdout
+    #[arg(long)]
+    pub out: Option<PathBuf>,
+    /// Show pattern analysis warnings
+    #[arg(long, default_value = "true")]
+    pub patterns: bool,
 }
 
 #[derive(Args)]
@@ -81,12 +98,13 @@ pub struct GenerateBindingsArgs {
     pub lang: BindingLang,
 }
 
-pub fn handle(cmd: ContractCommands) -> Result<()> {
+pub async fn handle(cmd: ContractCommands) -> Result<()> {
     match cmd {
-        ContractCommands::Invoke(args) => handle_invoke(args),
-        ContractCommands::Inspect(args) => handle_inspect(args),
+        ContractCommands::Invoke(args) => handle_invoke(args).await,
+        ContractCommands::Inspect(args) => handle_inspect(args).await,
         ContractCommands::Upload(args) => handle_upload(args),
         ContractCommands::GenerateBindings(args) => handle_generate_bindings(args),
+        ContractCommands::CallGraph(args) => handle_call_graph(args),
     }
 }
 
@@ -102,7 +120,7 @@ fn handle_generate_bindings(args: GenerateBindingsArgs) -> Result<()> {
     Ok(())
 }
 
-fn handle_inspect(args: InspectArgs) -> Result<()> {
+async fn handle_inspect(args: InspectArgs) -> Result<()> {
     config::validate_contract_id(&args.contract_id)?;
     if let Some(ref net) = args.network {
         config::validate_network(net)?;
@@ -117,7 +135,7 @@ fn handle_inspect(args: InspectArgs) -> Result<()> {
 
     println!();
     p::step(1, 1, "Querying contract instance from Soroban RPC…");
-    let inspect = soroban::inspect_contract(&args.contract_id, &network)?;
+    let inspect = soroban::inspect_contract(&args.contract_id, &network).await?;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&inspect)?);
@@ -173,7 +191,7 @@ fn handle_inspect(args: InspectArgs) -> Result<()> {
     Ok(())
 }
 
-fn handle_invoke(args: InvokeArgs) -> Result<()> {
+async fn handle_invoke(args: InvokeArgs) -> Result<()> {
     p::header("Invoke Soroban Contract");
 
     config::validate_contract_id(&args.contract_id)?;
@@ -273,7 +291,7 @@ fn handle_invoke(args: InvokeArgs) -> Result<()> {
         &arg_types,
         &args.network,
         submit_wallet.as_ref(),
-    )?;
+    ).await?;
 
     let simulation_result = outcome.simulation;
     p::kv_accent("Simulation", "✓ Success");
@@ -372,4 +390,49 @@ fn resolve_network(network_override: Option<String>) -> Result<String> {
             network
         ),
     }
+}
+
+fn handle_call_graph(args: CallGraphArgs) -> Result<()> {
+    config::validate_file_path(&args.path, Some("rs"))?;
+    p::header("Cross-Contract Call Graph");
+    p::kv("Source", &args.path.display().to_string());
+
+    let graph = call_graph::extract_call_graph(&args.path)?;
+
+    let output = match args.format.as_str() {
+        "dot" => call_graph::render_dot(&graph),
+        "json" => serde_json::to_string_pretty(&graph)?,
+        _ => call_graph::render_ascii(&graph),
+    };
+
+    if let Some(out_path) = &args.out {
+        std::fs::write(out_path, &output)?;
+        p::kv("Output saved", &out_path.display().to_string());
+    } else {
+        println!("{}", output);
+    }
+
+    p::separator();
+    p::kv("Nodes", &graph.nodes.len().to_string());
+    p::kv("Edges", &graph.edges.len().to_string());
+    p::kv("Dependencies", &graph.dependencies.len().to_string());
+
+    if args.patterns && !graph.patterns.is_empty() {
+        println!();
+        p::header("Pattern Analysis");
+        for pat in &graph.patterns {
+            let icon = match pat.severity.as_str() {
+                "high" => "⚠",
+                "medium" => "⚡",
+                _ => "ℹ",
+            };
+            println!("  {} [{}] {}", icon, pat.severity.to_uppercase(), pat.name);
+            println!("     {}", pat.description);
+        }
+        println!();
+        p::info("Use `starforge security audit <path>` for a full security report.");
+    }
+
+    p::success("Call graph extraction complete");
+    Ok(())
 }

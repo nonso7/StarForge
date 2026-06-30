@@ -1,4 +1,4 @@
-use crate::utils::{print as p, templates};
+use crate::utils::{print as p, registry, templates};
 use anyhow::Result;
 use clap::Subcommand;
 use std::path::PathBuf;
@@ -135,7 +135,7 @@ pub enum TemplateCommands {
     },
 }
 
-pub fn handle(cmd: TemplateCommands) -> Result<()> {
+pub async fn handle(cmd: TemplateCommands) -> Result<()> {
     match cmd {
         TemplateCommands::Import {
             path,
